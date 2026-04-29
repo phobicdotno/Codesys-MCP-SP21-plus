@@ -122,30 +122,36 @@ try:
     requested_access = _resolve_access(ACCESS)
     print("DEBUG: requested_access resolved to %r" % requested_access)
 
-    # Try the configured set first (these are the variables already
-    # selected for export). Fall back to the all-signatures view if the
-    # variable isn't yet configured -- setting access on a not-yet-configured
-    # variable is the standard way to "tick" it.
+    # IMPORTANT: configured_access is mutable ONLY on signature objects
+    # obtained from get_all_signatures(); the objects returned by
+    # get_only_configured_signatures() are a read-only view and assigning
+    # to .configured_access on them raises
+    #   "The access of the variable can only be changed in the list
+    #    of all signatures/data types."
+    # So we always look up via get_all_signatures first. The configured
+    # view is kept only as a final fallback (and to report whether the
+    # variable was already exported), never as the mutation target.
     sig = None
     library_id = LIBRARY_ID if LIBRARY_ID else None
     try:
-        configured = sc_obj.get_only_configured_signatures()
-        sig = _find_signature_in(configured, SIGNATURE_FQN, library_id)
+        all_sigs = sc_obj.get_all_signatures(False)
+        sig = _find_signature_in(all_sigs, SIGNATURE_FQN, library_id)
     except Exception as e:
-        print("DEBUG: get_only_configured_signatures failed: %s" % e)
-    found_in_configured = sig is not None
-    if sig is None:
-        try:
-            all_sigs = sc_obj.get_all_signatures(False)
-            sig = _find_signature_in(all_sigs, SIGNATURE_FQN, library_id)
-        except Exception as e:
-            print("DEBUG: get_all_signatures(False) failed: %s" % e)
+        print("DEBUG: get_all_signatures(False) failed: %s" % e)
     if sig is None:
         try:
             all_sigs = sc_obj.get_all_signatures(True)
             sig = _find_signature_in(all_sigs, SIGNATURE_FQN, library_id)
         except Exception as e:
             print("DEBUG: get_all_signatures(True) failed: %s" % e)
+    # Tracking-only: was this signature already in the configured set?
+    found_in_configured = False
+    try:
+        configured = sc_obj.get_only_configured_signatures()
+        if _find_signature_in(configured, SIGNATURE_FQN, library_id) is not None:
+            found_in_configured = True
+    except Exception:
+        pass
     if sig is None:
         raise RuntimeError(
             "Signature '%s' not found (library_id=%s). "

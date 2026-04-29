@@ -80,18 +80,20 @@ try:
 
     library_id = LIBRARY_ID if LIBRARY_ID else None
 
+    # IMPORTANT: configured_access is mutable ONLY on signature objects
+    # obtained from get_all_signatures(); the objects returned by
+    # get_only_configured_signatures() are a read-only view and assigning
+    # to .configured_access on them raises
+    #   "The access of the variable can only be changed in the list
+    #    of all signatures/data types."
+    # So we always look up via get_all_signatures, never the configured
+    # view, for the mutation target.
     sig = None
     try:
-        configured = sc_obj.get_only_configured_signatures()
-        sig = _find_signature_in(configured, SIGNATURE_FQN, library_id)
+        all_sigs = sc_obj.get_all_signatures(False)
+        sig = _find_signature_in(all_sigs, SIGNATURE_FQN, library_id)
     except Exception:
         pass
-    if sig is None:
-        try:
-            all_sigs = sc_obj.get_all_signatures(False)
-            sig = _find_signature_in(all_sigs, SIGNATURE_FQN, library_id)
-        except Exception:
-            pass
     if sig is None:
         try:
             all_sigs = sc_obj.get_all_signatures(True)
