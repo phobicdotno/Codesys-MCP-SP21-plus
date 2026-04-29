@@ -104,6 +104,13 @@ try:
         raise RuntimeError(
             "Signature '%s' not found (library_id=%s)." % (SIGNATURE_FQN, LIBRARY_ID or '<none>'))
 
+    # If _resolve_access fell back to a plain int (because `from scriptengine
+    # import SymbolAccess` returned a hollow object on this SP), the C#
+    # setter rejects every non-zero int with "Cannot convert numeric value
+    # N to SymbolAccess. The value must be zero." -- only 0 (=None) survives
+    # the implicit conversion. Recover lazily on the first variable: take
+    # the enum class from v.maximal_access (always a genuine SymbolAccess
+    # value) and re-parse the int through it.
     changed = []
     skipped = []
     try:
@@ -112,6 +119,14 @@ try:
                 v_name = v.name
             except Exception:
                 v_name = '?'
+            if isinstance(requested_access, int):
+                try:
+                    enum_cls = type(v.maximal_access)
+                    requested_access = enum_cls(requested_access)
+                    print("DEBUG: int->enum coerced via type(v.maximal_access): %r"
+                          % requested_access)
+                except Exception as e:
+                    print("DEBUG: int->enum coercion failed: %s" % e)
             try:
                 v.configured_access = requested_access
                 changed.append(v_name)
