@@ -970,11 +970,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
 
   s.tool(
     'create_project',
-    'Creates a new CODESYS project from the standard template.',
+    "Creates a new CODESYS project from the standard template. Optional `deviceName` -- if supplied, the script swaps the template's default device for the device whose display name matches (substring + highest-version match). Use this when the template's default target (typically PLCWinNT) isn't installed on the host machine and you want, e.g., 'CODESYS Control Win V3 x64' instead. The swap uses ScriptDeviceObject.update() which preserves the Application/POU/library subtree underneath. Empty/omitted = keep the template default.",
     {
       filePath: z.string().describe("Path where the new project file should be created."),
+      deviceName: z.string().optional().describe("Optional. Substring of the device display name (e.g. 'CODESYS Control Win V3 x64'). Highest-version match wins. Omit to keep the template's default device."),
     },
-    async (args: { filePath: string }) => {
+    async (args: { filePath: string; deviceName?: string }) => {
       const absPath = path.normalize(
         path.isAbsolute(args.filePath) ? args.filePath : path.join(workspaceDir, args.filePath)
       );
@@ -1009,9 +1010,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScript('create_project', {
         PROJECT_FILE_PATH: absPath,
         TEMPLATE_PROJECT_PATH: templatePath,
+        DEVICE_NAME: (args.deviceName ?? '').trim(),
       });
       const result = await executor.executeScript(script);
-      return await formatModifyingResponse(result, `Project created from template: ${absPath}`, absPath, mirrorCtx);
+      const deviceNote = args.deviceName ? ` (device set to '${args.deviceName.trim()}')` : '';
+      return await formatModifyingResponse(result, `Project created from template: ${absPath}${deviceNote}`, absPath, mirrorCtx);
     }
   );
 
