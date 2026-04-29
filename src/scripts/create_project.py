@@ -41,12 +41,23 @@ def _find_device_in_project(project):
 def _resolve_device_by_name(name):
     """Look up the device repository for a device whose display name
     matches `name` (substring match per get_all_devices(name, source)
-    overload). Returns the highest-version match, or None."""
+    overload). Returns the highest-version match, or None.
+
+    The repo lives in the scriptengine module (Stubs/scriptengine/__init__.py
+    line 25: `device_repository = ScriptDeviceRepository()`), accessed as
+    `script_engine.device_repository`. Older IDE builds also inject it as
+    a builtin -- try the module attribute first, fall back to the builtin."""
+    repo = None
     try:
-        repo = device_repository  # noqa: F821 -- injected by scriptengine
-    except NameError:
-        print("DEBUG: device_repository global not in scope.")
-        return None
+        repo = script_engine.device_repository
+    except Exception as e:
+        print("DEBUG: script_engine.device_repository unavailable: %s" % e)
+    if repo is None:
+        try:
+            repo = device_repository  # noqa: F821 -- builtin if injected
+        except NameError:
+            print("DEBUG: device_repository builtin not in scope either.")
+            return None
     try:
         candidates = repo.get_all_devices(name, None)
     except Exception as e:
@@ -81,6 +92,18 @@ def _resolve_device_by_name(name):
 
 
 try:
+    # Force-suppress modal prompts (storage-format conversion, etc.)
+    # ScriptPromptHandling.NoFlag is the default per the stub but some IDE
+    # contexts get re-set to AlwaysForwardPrompts by other plugins. Setting
+    # it explicitly here makes sure remove() / project.add() don't hang on
+    # a confirmation dialog the script can't see.
+    try:
+        from scriptengine import ScriptPromptHandling
+        script_engine.system.script_prompt_handling = ScriptPromptHandling.NoFlag
+        print("DEBUG: script_prompt_handling = NoFlag (silent default).")
+    except Exception as e:
+        print("DEBUG: could not set script_prompt_handling: %s" % e)
+
     print("DEBUG: Python script create_project (copy from template):")
     print("DEBUG:   Template Source = %s" % TEMPLATE_PROJECT_PATH)
     print("DEBUG:   Target Path     = %s" % PROJECT_FILE_PATH)
@@ -149,18 +172,40 @@ try:
             print("SCRIPT_ERROR: %s" % msg)
             sys.exit(1)
 
+        existing_name = existing_device.get_name()
         print("DEBUG: Swapping device '%s' -> '%s' (type=%s id=%s version=%s)" % (
-            existing_device.get_name(),
+            existing_name,
             swapped_to,
             new_dev_id.type,
             new_dev_id.id,
             new_dev_id.version))
+        # NOTE: ScriptDeviceObject.update(device) crashes CODESYS on SP22 P1
+        # (CODESYS exits with code 1 mid-call) when used to swap to a
+        # different *kind* of device -- the API appears intended only for
+        # version-bumping the same device family. ScriptDeviceObject.unplug()
+        # is also the wrong call for top-level devices: it raises
+        # "The argument guidSlot is not a slot device" because unplug only
+        # applies to devices plugged into a slot of a parent device.
+        # The right call for top-level devices is ScriptObject.remove().
+        # The template's PLC_PRG body is empty so we don't lose any user
+        # code by re-creating the device subtree.
         try:
-            existing_device.update(new_dev_id)
+            existing_device.remove()
+            print("DEBUG: existing device removed.")
         except Exception as e:
             detailed = traceback.format_exc()
-            msg = ("Device swap failed (existing.update(new_id) raised): %s\n%s"
-                   % (e, detailed))
+            msg = ("Device swap failed at remove step: %s\n%s" % (e, detailed))
+            print("ERROR: %s" % msg)
+            print("SCRIPT_ERROR: %s" % msg)
+            sys.exit(1)
+        try:
+            project.add(existing_name, new_dev_id)
+            print("DEBUG: project.add(name, new_dev_id) succeeded.")
+        except Exception as e:
+            detailed = traceback.format_exc()
+            msg = ("Device swap failed at project.add step "
+                   "(remove already happened, project may be in a partial state): "
+                   "%s\n%s" % (e, detailed))
             print("ERROR: %s" % msg)
             print("SCRIPT_ERROR: %s" % msg)
             sys.exit(1)
