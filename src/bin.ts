@@ -54,7 +54,7 @@ program
     'persistent'
   )
   .option('--no-auto-launch', 'Do not auto-launch CODESYS on startup')
-  .option('--fallback-headless', 'Fall back to headless if persistent fails', true)
+  .option('--fallback-headless', 'Fall back to headless (--noUI) if persistent launch fails. Off by default — opt in only if you genuinely want silent --noUI processes.', false)
   .option('--keep-alive', 'Keep CODESYS running after server stops', false)
   .option('--auto-mirror', 'Re-run mirror_export after every modifying tool so an external editor watching <projectDir>/mcp-mirror/ sees changes live', false)
   .option('--approve-edits', 'Gate modifying MCP tools behind a phobiCS-tui y/n diff prompt', false)

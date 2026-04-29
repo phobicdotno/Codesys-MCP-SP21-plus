@@ -259,7 +259,7 @@ codesys-mcp-sp21-plus --print-config --for-project "C:\path\to\MyMachine.project
 | `-w, --workspace <dir>` | Workspace directory for relative paths | Current directory |
 | `-m, --mode <mode>` | `persistent` (UI) or `headless` (--noUI) | `persistent` |
 | `--no-auto-launch` | Don't launch CODESYS on startup | Auto-launch enabled |
-| `--fallback-headless` | Fall back to headless if persistent fails | `true` |
+| `--fallback-headless` | Fall back to headless (`--noUI`) if persistent launch fails | `false` |
 | `--keep-alive` | Keep CODESYS running after server stops | `false` |
 | `--timeout <ms>` | Default command timeout | `60000` |
 | `--detect` | List installed CODESYS versions and exit | — |
@@ -433,7 +433,7 @@ These tools maintain a `_MCP_PROJECT_VERSION` GVL inside the project so the runn
 Falls back to the original approach: each tool call spawns a new CODESYS process with `--noUI`, runs the script, and exits. No UI is shown. Used when:
 
 - `--mode headless` is specified
-- Persistent mode fails to launch and `--fallback-headless` is enabled
+- Persistent mode fails to launch and `--fallback-headless` is explicitly opted in (off by default)
 - CODESYS is launched with `--no-auto-launch` and `launch_codesys` hasn't been called yet
 
 ## Detect Installed Versions

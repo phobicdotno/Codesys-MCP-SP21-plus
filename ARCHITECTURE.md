@@ -234,7 +234,7 @@ When persistent mode is unavailable, the `HeadlessExecutor` provides the same `S
 
 Fallback activates when:
 - `--mode headless` is specified
-- Persistent launch fails and `--fallback-headless` is enabled
+- Persistent launch fails and `--fallback-headless` is explicitly opted in (off by default)
 - Server starts with `--no-auto-launch` before `launch_codesys` is called
 
 ## Differences from Original Toolkit
