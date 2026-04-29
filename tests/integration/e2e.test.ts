@@ -421,6 +421,156 @@ describe('E2E Script Preparation', () => {
     expect(script).not.toMatch(/\{[A-Z_]+\}/);
   });
 
+  // ───────── Regression tests for fixes landed 2026-04-29 ─────────
+
+  it('set_symbol_access looks up mutation target via get_all_signatures, not the configured view', () => {
+    // Fix from PR #7: get_only_configured_signatures returns a read-only
+    // view; assigning to .configured_access on its variables raises
+    // "The access of the variable can only be changed in the list of all
+    // signatures/data types." The mutation lookup must hit
+    // get_all_signatures FIRST (with both compile=False/True fallbacks);
+    // the configured view is kept only as a tracking-only flag.
+    const script = mgr.prepareScriptWithHelpers(
+      'set_symbol_access',
+      {
+        PROJECT_FILE_PATH: 'C:\\test.project',
+        SIGNATURE_FQN: 'Application.PLC_PRG',
+        VARIABLE_NAME: 'nCounter',
+        ACCESS: 'None',
+        LIBRARY_ID: '',
+        ENSURE_CONFIGURED: '1',
+      },
+      SYMCONF_HELPERS
+    );
+    // get_all_signatures(False) and get_all_signatures(True) MUST be the
+    // mutation lookup; they appear before any tracking probe.
+    const allSigsFalseIdx = script.indexOf('get_all_signatures(False)');
+    const allSigsTrueIdx = script.indexOf('get_all_signatures(True)');
+    const trackingIdx = script.indexOf('found_in_configured');
+    expect(allSigsFalseIdx).toBeGreaterThan(0);
+    expect(allSigsTrueIdx).toBeGreaterThan(allSigsFalseIdx);
+    // The tracking flag block (the configured-view probe) comes AFTER both
+    // get_all_signatures lookups -- this is what makes the configured view
+    // tracking-only, not the mutation target.
+    expect(trackingIdx).toBeGreaterThan(allSigsTrueIdx);
+  });
+
+  it('set_symbol_access coerces int->SymbolAccess via type(maximal_access) before assigning', () => {
+    // Fix from PR #9: when `from scriptengine import SymbolAccess` returns
+    // a hollow class, _resolve_access falls back to a plain int and the
+    // C# setter rejects every non-zero int with "Cannot convert numeric
+    // value N to SymbolAccess. The value must be zero." The fix coerces
+    // the int through the enum class extracted from var.maximal_access
+    // BEFORE `var.configured_access = requested_access` runs.
+    const script = mgr.prepareScriptWithHelpers(
+      'set_symbol_access',
+      {
+        PROJECT_FILE_PATH: 'C:\\test.project',
+        SIGNATURE_FQN: 'Application.PLC_PRG',
+        VARIABLE_NAME: 'nCounter',
+        ACCESS: 'ReadOnly',
+        LIBRARY_ID: '',
+        ENSURE_CONFIGURED: '1',
+      },
+      SYMCONF_HELPERS
+    );
+    // Coercion block must reference type(max_access) and re-parse the int.
+    expect(script).toContain('isinstance(requested_access, int)');
+    expect(script).toContain('type(max_access)');
+    expect(script).toContain('enum_cls(requested_access)');
+    // The coercion must come BEFORE the actual assignment.
+    const coerceIdx = script.indexOf('enum_cls(requested_access)');
+    const assignIdx = script.indexOf('var.configured_access = requested_access');
+    expect(coerceIdx).toBeGreaterThan(0);
+    expect(assignIdx).toBeGreaterThan(coerceIdx);
+  });
+
+  it('set_signature_access_bulk coerces int->SymbolAccess lazily on the first variable', () => {
+    // Same root cause as set_symbol_access; fix is per-loop because
+    // requested_access is shared across all variables in a bulk run.
+    // The coercion uses type(v.maximal_access) on the first iteration
+    // and stays effective for the rest of the loop.
+    const script = mgr.prepareScriptWithHelpers(
+      'set_signature_access_bulk',
+      {
+        PROJECT_FILE_PATH: 'C:\\test.project',
+        SIGNATURE_FQN: 'Application.PLC_PRG',
+        ACCESS: 'WriteOnly',
+        LIBRARY_ID: '',
+      },
+      SYMCONF_HELPERS
+    );
+    expect(script).toContain('isinstance(requested_access, int)');
+    expect(script).toContain('type(v.maximal_access)');
+    expect(script).toContain('enum_cls(requested_access)');
+    // Coercion must be inside the for-loop and BEFORE the assignment.
+    const loopIdx = script.indexOf('for v in sig.variables');
+    const coerceIdx = script.indexOf('enum_cls(requested_access)');
+    const assignIdx = script.indexOf('v.configured_access = requested_access');
+    expect(loopIdx).toBeGreaterThan(0);
+    expect(coerceIdx).toBeGreaterThan(loopIdx);
+    expect(assignIdx).toBeGreaterThan(coerceIdx);
+  });
+
+  it('create_project without deviceName preserves the no-swap path', () => {
+    // Backwards-compat: omitting deviceName must produce a script that
+    // does NOT touch device_repository / project.add / existing_device.
+    const script = mgr.prepareScript('create_project', {
+      PROJECT_FILE_PATH: 'C:\\test.project',
+      TEMPLATE_PROJECT_PATH: 'C:\\template.project',
+      DEVICE_NAME: '',
+    });
+    // Substituted empty deviceName.
+    expect(script).toContain("DEVICE_NAME = r''");
+    // The conditional swap branch is gated by `if DEVICE_NAME:` -- the
+    // text of that branch is in the rendered script either way (it's a
+    // template, not a generator), but the runtime check skips it.
+    expect(script).toContain('if DEVICE_NAME:');
+    // Substitution of the other args still works.
+    expect(script).toContain("PROJECT_FILE_PATH = r'C:\\test.project'");
+    expect(script).toContain("TEMPLATE_PROJECT_PATH = r'C:\\template.project'");
+    expect(script).not.toMatch(/\{[A-Z_]+\}/);
+  });
+
+  it('create_project deviceName swap renders prompt-suppression + update-first + close + cache delete', () => {
+    // Combined regression for PRs #8/#10/#11/#12.
+    const script = mgr.prepareScript('create_project', {
+      PROJECT_FILE_PATH: 'C:\\test.project',
+      TEMPLATE_PROJECT_PATH: 'C:\\template.project',
+      DEVICE_NAME: 'CODESYS Control Win V3 x64',
+    });
+    expect(script).toContain("DEVICE_NAME = r'CODESYS Control Win V3 x64'");
+
+    // Prompt suppression via the OBSOLETE-but-settable PromptHandling.NONE
+    // (PR #12). Setting the read-only `script_prompt_handling` attribute
+    // would silently fail.
+    expect(script).toContain('PromptHandling');
+    expect(script).toContain('system.prompt_handling = PromptHandling.NONE');
+    // Int-literal fallback for environments where the enum import fails.
+    expect(script).toContain('system.prompt_handling = 0');
+
+    // Device lookup via the scriptengine module (PR #10).
+    expect(script).toContain('script_engine.device_repository');
+    expect(script).toContain('get_all_devices(name, None)');
+
+    // Non-destructive default: try update() first (PR #11).
+    const updateIdx = script.indexOf('existing_device.update(new_dev_id)');
+    const removeIdx = script.indexOf('existing_device.remove()');
+    const addIdx = script.indexOf('project.add(existing_name, new_dev_id)');
+    expect(updateIdx).toBeGreaterThan(0);
+    expect(removeIdx).toBeGreaterThan(updateIdx);
+    expect(addIdx).toBeGreaterThan(removeIdx);
+    // The destructive remove+add path is gated by `if not update_ok:`.
+    expect(script).toContain('if not update_ok');
+
+    // Post-swap cleanup (PR #12): close project, delete precompilecache.
+    expect(script).toContain('project.close()');
+    expect(script).toContain("'_project.precompilecache'");
+    expect(script).toContain('os.remove(cache_path)');
+
+    expect(script).not.toMatch(/\{[A-Z_]+\}/);
+  });
+
   it('every symbol config script template loads without error', () => {
     const scriptNames = [
       'find_symbol_config', 'list_all_signatures', 'list_all_datatypes',
