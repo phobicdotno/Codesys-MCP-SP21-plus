@@ -57,7 +57,7 @@ program
   .option('--fallback-headless', 'Fall back to headless if persistent fails', true)
   .option('--keep-alive', 'Keep CODESYS running after server stops', false)
   .option('--auto-mirror', 'Re-run mirror_export after every modifying tool so an external editor watching <projectDir>/mcp-mirror/ sees changes live', false)
-  .option('--approve-edits', 'Gate modifying MCP tools behind a phobiCS-tui y/n diff prompt', false)
+  .option('--no-approve-edits', 'Disable the phobiCS-tui y/n diff gate on modifying tools (default: gate ENABLED)')
   .option('--live-values', 'Pump runtime values for the selected POU into tui-live-values.json so phobiCS-tui can overlay them inline. Requires the runtime to be online; failures are silent.', false)
   .option('--live-values-interval <ms>', 'Poll interval for --live-values in ms. Default 500. Clamped to [100, 60000].', '500')
   .option('--timeout <ms>', 'Default command timeout in ms', '60000')
@@ -210,7 +210,7 @@ if (opts.sshVersion) {
     debug: opts.debug || false,
     mode: (opts.mode === 'headless' ? 'headless' : 'persistent') as ExecutionMode,
     autoMirror: opts.autoMirror || false,
-    approveEdits: opts.approveEdits || false,
+    approveEdits: opts.approveEdits !== false,
     liveValues: opts.liveValues || false,
     liveValuesIntervalMs: clampInterval(opts.liveValuesInterval),
   };
@@ -223,9 +223,7 @@ if (opts.sshVersion) {
   if (config.autoMirror) {
     process.stderr.write(`  Auto-mirror: ENABLED (mirror_export runs after every edit)\n`);
   }
-  if (config.approveEdits) {
-    process.stderr.write(`  Approve edits: ENABLED (modifying tools will prompt via phobiCS-tui)\n`);
-  }
+  process.stderr.write(`  Approve edits: ${config.approveEdits ? 'ENABLED (modifying tools will prompt via phobiCS-tui)' : 'disabled'}\n`);
   if (config.liveValues) {
     process.stderr.write(`  Live values: ENABLED (poll ${config.liveValuesIntervalMs ?? 500}ms; writes tui-live-values.json)\n`);
   }
