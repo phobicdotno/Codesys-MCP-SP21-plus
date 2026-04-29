@@ -179,36 +179,54 @@ try:
             new_dev_id.type,
             new_dev_id.id,
             new_dev_id.version))
-        # NOTE: ScriptDeviceObject.update(device) crashes CODESYS on SP22 P1
-        # (CODESYS exits with code 1 mid-call) when used to swap to a
-        # different *kind* of device -- the API appears intended only for
-        # version-bumping the same device family. ScriptDeviceObject.unplug()
-        # is also the wrong call for top-level devices: it raises
-        # "The argument guidSlot is not a slot device" because unplug only
-        # applies to devices plugged into a slot of a parent device.
-        # The right call for top-level devices is ScriptObject.remove().
-        # The template's PLC_PRG body is empty so we don't lose any user
-        # code by re-creating the device subtree.
+        # Try update() FIRST -- it's the documented in-place device-kind
+        # change that preserves the Application/POU/library subtree
+        # underneath. The earlier "CODESYS exits with code 1" crash was
+        # almost certainly a UI dialog hanging the script worker; with
+        # script_prompt_handling forced to NoFlag at the top of this
+        # script the dialog auto-suppresses. If update() still raises
+        # (e.g. older SP, different device family that genuinely can't
+        # be swapped in-place), fall back to remove() + project.add()
+        # which IS destructive: it nukes the entire device subtree
+        # (Application, POUs, libraries, tasks) and rebuilds an empty
+        # one. The fallback is safe ONLY at template-creation time
+        # because the template's PLC_PRG body is empty -- but anyone
+        # lifting this swap into a standalone change_device tool MUST
+        # NOT use the fallback path on an existing project with code.
+        update_ok = False
         try:
-            existing_device.remove()
-            print("DEBUG: existing device removed.")
+            existing_device.update(new_dev_id)
+            update_ok = True
+            print("DEBUG: existing_device.update(new_dev_id) succeeded "
+                  "-- device kind swapped in-place, subtree preserved.")
         except Exception as e:
             detailed = traceback.format_exc()
-            msg = ("Device swap failed at remove step: %s\n%s" % (e, detailed))
-            print("ERROR: %s" % msg)
-            print("SCRIPT_ERROR: %s" % msg)
-            sys.exit(1)
-        try:
-            project.add(existing_name, new_dev_id)
-            print("DEBUG: project.add(name, new_dev_id) succeeded.")
-        except Exception as e:
-            detailed = traceback.format_exc()
-            msg = ("Device swap failed at project.add step "
-                   "(remove already happened, project may be in a partial state): "
-                   "%s\n%s" % (e, detailed))
-            print("ERROR: %s" % msg)
-            print("SCRIPT_ERROR: %s" % msg)
-            sys.exit(1)
+            print("DEBUG: update(new_dev_id) failed; falling back to "
+                  "destructive remove+add. Reason: %s\n%s" % (e, detailed))
+
+        if not update_ok:
+            try:
+                existing_device.remove()
+                print("DEBUG: existing device removed (destructive fallback).")
+            except Exception as e:
+                detailed = traceback.format_exc()
+                msg = ("Device swap failed at remove step (after update() "
+                       "fallback): %s\n%s" % (e, detailed))
+                print("ERROR: %s" % msg)
+                print("SCRIPT_ERROR: %s" % msg)
+                sys.exit(1)
+            try:
+                project.add(existing_name, new_dev_id)
+                print("DEBUG: project.add(name, new_dev_id) succeeded "
+                      "(destructive fallback path).")
+            except Exception as e:
+                detailed = traceback.format_exc()
+                msg = ("Device swap failed at project.add step "
+                       "(remove already happened, project may be in a "
+                       "partial state): %s\n%s" % (e, detailed))
+                print("ERROR: %s" % msg)
+                print("SCRIPT_ERROR: %s" % msg)
+                sys.exit(1)
         device_swapped = True
         print("DEBUG: Device swap succeeded.")
 
