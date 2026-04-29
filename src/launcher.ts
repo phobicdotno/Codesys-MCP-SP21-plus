@@ -120,6 +120,8 @@ export class CodesysLauncher implements ScriptExecutor {
       return;
     }
 
+    this.lastError = null;
+
     // Validate CODESYS exe exists
     if (!fs.existsSync(this.config.codesysPath)) {
       const err = `CODESYS executable not found: ${this.config.codesysPath}`;
@@ -225,6 +227,7 @@ export class CodesysLauncher implements ScriptExecutor {
       if (await this.ipcClient.isReady()) {
         this.setState('ready');
         this.startedAt = Date.now();
+        this.lastError = null;
         launcherLog.info('CODESYS watcher is ready');
         this.startHealthMonitor();
         return;
