@@ -93,16 +93,30 @@ def _resolve_device_by_name(name):
 
 try:
     # Force-suppress modal prompts (storage-format conversion, etc.)
-    # ScriptPromptHandling.NoFlag is the default per the stub but some IDE
-    # contexts get re-set to AlwaysForwardPrompts by other plugins. Setting
-    # it explicitly here makes sure remove() / project.add() don't hang on
-    # a confirmation dialog the script can't see.
+    # The settable property is `system.prompt_handling` (the OBSOLETE
+    # PromptHandling enum is what the setter accepts); the newer
+    # `script_prompt_handling` is read-only. PromptHandling.NONE = 0 is
+    # documented as equivalent to ScriptPromptHandling.SuppressPrompts.
+    # Without this, project.update() / project.add() hang on a modal
+    # the script can't see.
+    suppression_set = False
     try:
-        from scriptengine import ScriptPromptHandling
-        script_engine.system.script_prompt_handling = ScriptPromptHandling.NoFlag
-        print("DEBUG: script_prompt_handling = NoFlag (silent default).")
+        from scriptengine import PromptHandling
+        script_engine.system.prompt_handling = PromptHandling.NONE
+        suppression_set = True
+        print("DEBUG: system.prompt_handling = PromptHandling.NONE (suppress).")
     except Exception as e:
-        print("DEBUG: could not set script_prompt_handling: %s" % e)
+        print("DEBUG: could not set system.prompt_handling = PromptHandling.NONE: %s" % e)
+    if not suppression_set:
+        try:
+            script_engine.system.prompt_handling = 0
+            suppression_set = True
+            print("DEBUG: system.prompt_handling = 0 (suppress, int fallback).")
+        except Exception as e:
+            print("DEBUG: int-literal prompt_handling = 0 also failed: %s" % e)
+    if not suppression_set:
+        print("WARN: prompt suppression NOT set -- update()/remove()/save() "
+              "may hang on a modal dialog the script can't see.")
 
     print("DEBUG: Python script create_project (copy from template):")
     print("DEBUG:   Template Source = %s" % TEMPLATE_PROJECT_PATH)
@@ -237,6 +251,38 @@ try:
         print("DEBUG: Project save succeeded.")
     except Exception as save_err:
         print("WARN: Save after open failed: %s" % save_err)
+
+    # After a deviceName swap, CODESYS keeps stale library version pins
+    # in the in-memory project state -- the next compile_project produces
+    # errors like "Could not open library 'IoStandard, 3.1.3.1 (System)'"
+    # and "Device description for 'PLCWinNT' is missing" even though the
+    # libman view (list_project_libraries) shows the new resolutions.
+    # Closing the project (without reopening) flushes the in-memory state;
+    # the next MCP tool call will trigger ensure_project_open which loads
+    # the swapped XML fresh. Also nuke the precompilecache file while the
+    # project is closed so the next IDE session also starts clean.
+    if device_swapped:
+        try:
+            print("DEBUG: Closing project to flush stale device state...")
+            project.close()
+            print("DEBUG: Project closed -- next tool call will reopen fresh.")
+        except Exception as close_err:
+            print("WARN: project.close() failed (next compile may show stale "
+                  "PLCWinNT/IoStandard 3.1.3.1 errors until project is reopened): %s"
+                  % close_err)
+        try:
+            project_dir = os.path.dirname(PROJECT_FILE_PATH)
+            base = os.path.basename(PROJECT_FILE_PATH)
+            if base.lower().endswith('.project'):
+                base = base[:-len('.project')]
+            cache_path = os.path.join(project_dir, base + '_project.precompilecache')
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+                print("DEBUG: Deleted stale precompilecache: %s" % cache_path)
+            else:
+                print("DEBUG: No precompilecache to delete (path not present): %s" % cache_path)
+        except Exception as cache_err:
+            print("WARN: Could not delete precompilecache: %s" % cache_err)
 
     print("Project Created from Template Copy at: %s" % PROJECT_FILE_PATH)
     if device_swapped:
