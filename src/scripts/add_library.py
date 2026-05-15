@@ -123,74 +123,62 @@ def _resolve_in_repo_accessible():
 
 
 def _find_library_sp22(lm_global, name):
-    """SP22 dispatcher for find_library. The SP22 stub documents
-    `find_library(display_name: str)` but the live API rejects bare
-    strings with an exception whose payload contains 'stDisplayName'
-    (the C# parameter), AND the keyword form rejects 'stDisplayName='.
-    Workaround: walk `lm.repositories` looking for a library whose
-    displayname / title / name matches. Multiple accessor names tried
-    because LibRepository's iteration API is undocumented on SP22."""
-    # Try the documented signature first; some installs accept it.
+    """SP22 dispatcher for find_library.
+
+    The SP22 stub documents `find_library(display_name: str)` but the
+    live API rejects bare strings with 'SystemError: stDisplayName' (the
+    C# parameter name) and rejects the kwarg form too. The actual
+    working API on SP22, verified live 2026-04-28:
+
+        lm.get_library(name) -> ManagedLib | None
+        lm.get_all_libraries() -> iterable[ManagedLib]
+
+    LibRepository on SP22 exposes only `editable`, `name`, `root_folder`
+    -- no iteration accessor -- so the old repo-walk path was a dead
+    end. Strategy:
+      1. get_library(name) -- single direct lookup (preferred).
+      2. fall back to get_all_libraries() and filter on default_name /
+         displayname / name. default_name is what the IDE Add Library
+         dialog uses, so it's the most reliable match key."""
+    # Primary: direct lookup by name.
     try:
-        result = lm_global.find_library(name)
-        if result is not None:
-            try:
-                return result[0]
-            except Exception:
-                return result
+        hit = lm_global.get_library(name)
+        if hit is not None:
+            return hit
     except Exception as e:
-        print("DEBUG: SP22 find_library(%r) raised: %s: %s -- trying repository walk"
+        print("DEBUG: SP22 get_library(%r) raised: %s: %s -- trying enumerate"
               % (name, type(e).__name__, e))
 
-    repos = []
+    # Fallback: enumerate and filter.
+    libs = None
     try:
-        repos = list(lm_global.repositories)
+        libs = list(lm_global.get_all_libraries())
     except Exception as e:
-        print("DEBUG: lm.repositories raised: %s" % e)
+        print("DEBUG: SP22 get_all_libraries() raised: %s: %s" % (type(e).__name__, e))
         return None
 
     candidates = []
-    for repo in repos:
+    for lib in libs:
         try:
-            repo_name = str(getattr(repo, 'name', '?'))
+            dn = str(getattr(lib, 'default_name', '') or '')
+            disp = str(getattr(lib, 'displayname', '') or '')
+            ln = str(getattr(lib, 'name', '') or '')
         except Exception:
-            repo_name = '?'
-        libs = None
-        # Try several iteration accessors; SP22 doesn't document one.
-        for accessor in ('get_libraries', 'libraries', 'libs', 'all_libraries'):
-            try:
-                attr = getattr(repo, accessor, None)
-                if attr is None:
-                    continue
-                libs = list(attr() if callable(attr) else attr)
-                if libs is not None:
-                    break
-            except Exception:
-                libs = None
-        if libs is None:
-            try:
-                libs = list(repo)  # iter() fallback
-            except Exception:
-                continue
-        if not libs:
             continue
-        for lib in libs:
-            try:
-                disp = str(getattr(lib, 'displayname', '') or '')
-                title = str(getattr(lib, 'title', '') or '')
-                ln = str(getattr(lib, 'name', '') or '')
-                if (disp == name or title == name or ln == name
-                        or disp.startswith(name + ',')
-                        or ln.startswith(name + ',')):
-                    candidates.append((repo_name, disp, ln, lib))
-            except Exception:
-                pass
+        if (dn == name or disp == name or ln == name
+                or dn.startswith(name + ',')
+                or disp.startswith(name + ',')
+                or ln.startswith(name + ',')):
+            candidates.append((dn, disp, ln, lib))
+
     if candidates:
-        print("DEBUG: SP22 repo walk: %d match(es) for %r" % (len(candidates), name))
-        # Highest version first (descending displayname sort).
+        print("DEBUG: SP22 get_all_libraries: %d match(es) for %r"
+              % (len(candidates), name))
+        # Prefer highest displayname (versions sort lexically descending).
         candidates.sort(key=lambda t: t[1], reverse=True)
         return candidates[0][3]
-    print("DEBUG: SP22 repo walk: no match for %r across %d repo(s)" % (name, len(repos)))
+    print("DEBUG: SP22 get_all_libraries: no match for %r across %d lib(s)"
+          % (name, len(libs)))
     return None
 
 
