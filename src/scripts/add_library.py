@@ -541,8 +541,11 @@ try:
         print("SCRIPT_ERROR: %s" % msg)
         sys.exit(1)
 
-    if not _is_resolved(new_ref):
+    if not _is_resolved(new_ref) and resolved_lib is None:
         # Unresolvable placeholder. Remove it before save() and report.
+        # Only back out when we did NOT pre-resolve to a real installed ManagedLib;
+        # a genuine managed add fills in effective_resolution only after reopen, so the
+        # hollow-check is a false negative there and must not discard it. (NVL-bench fix)
         eff = getattr(new_ref, 'effective_resolution', None)
         is_ph = getattr(new_ref, 'is_placeholder', None)
         removed_ok, rem_err = _try_remove(lib_manager, LIBRARY_NAME)

@@ -34,6 +34,23 @@ def _find_gateway(target_device):
                 return gw
         except Exception:
             continue
+    # NVL-bench fix: when the device gateway GUID is not configured in this IDE profile
+    # (fresh/headless profile), auto-register one under that GUID from env vars so online
+    # tools work without manually picking a gateway in the IDE dropdown. Address/port are
+    # NOT hard-coded -- set CODESYS_GATEWAY_ADDR (and optionally _PORT/_NAME).
+    try:
+        import os as _os
+        _addr = _os.environ.get("CODESYS_GATEWAY_ADDR")
+        if _addr:
+            import System as _Sys
+            _port = int(_os.environ.get("CODESYS_GATEWAY_PORT", "1217"))
+            _gw = online.gateways.add_new_gateway(
+                _os.environ.get("CODESYS_GATEWAY_NAME", "mcp-gateway"),
+                {0: _addr, 1: _port}, None, _Sys.Guid(target_guid))
+            print("DEBUG: auto-registered gateway %s:%d under guid %s" % (_addr, _port, target_guid))
+            return _gw
+    except Exception as _e:
+        print("DEBUG: gateway auto-registration failed: %s" % _e)
     raise RuntimeError(
         "Device's configured gateway (Guid %s) is not in scriptengine.online.gateways. "
         "Open the IDE Gateway dropdown and pick a configured gateway." % target_guid
