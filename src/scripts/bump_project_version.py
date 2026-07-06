@@ -19,6 +19,11 @@ import sys, scriptengine as script_engine, traceback, re
 
 LEVEL = "{LEVEL}"  # major | minor | revision | build
 
+# Optional first-run seed override ('' = classic 1.0.0.0). The TS side derives
+# it from the latest v* git tag so a project whose Project Information.Version
+# was never set does not jump out of an already-tagged release series.
+SEED_VERSION = "{SEED_VERSION}"
+
 VALID_LEVELS = ('major', 'minor', 'revision', 'build')
 
 # Standard runtime-readable version anchor. Lives as a constant in a GVL
@@ -276,9 +281,19 @@ try:
     # level argument is moot for the seed step.
     seed_check = parse_version(before_raw)
     if seed_check == (0, 0, 0, 0) and (before_raw is None or str(before_raw).strip() in ('', '0.0.0.0', 'None')):
-        after_parts = (1, 0, 0, 0)
-        after_str = '1.0.0.0'
-        print("DEBUG: bump_project_version: no prior version -- seeding to 1.0.0.0 (level=%s ignored on first run)" % LEVEL)
+        # Prefer the tag-derived seed when the TS side found a v* release tag,
+        # so a project with an unset Project Information.Version stays in its
+        # already-tagged series instead of jumping to 1.0.0.0. Guard against an
+        # unsubstituted placeholder for safety with older callers.
+        seed_str = SEED_VERSION.strip()
+        if re.match(r'^\d+\.\d+\.\d+\.\d+$', seed_str):
+            after_parts = parse_version(seed_str)
+            after_str = seed_str
+            print("DEBUG: bump_project_version: no prior version -- seeding to %s from latest v* git tag (level=%s applied to the tag)" % (after_str, LEVEL))
+        else:
+            after_parts = (1, 0, 0, 0)
+            after_str = '1.0.0.0'
+            print("DEBUG: bump_project_version: no prior version -- seeding to 1.0.0.0 (level=%s ignored on first run)" % LEVEL)
     else:
         before_parts = seed_check
         after_parts = bump(before_parts, LEVEL)
