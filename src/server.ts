@@ -3385,7 +3385,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       projectFilePath: z.string().describe("Path to the project file."),
       matchName: z.string().optional().describe("Match by device_name from the scan (exact, case-insensitive). E.g. 'codesys-pi'."),
       matchDeviceId: z.string().optional().describe("Match by device_id from the scan."),
-      matchAddress: z.string().optional().describe("Force a specific router address (e.g. '0301.3053'). Skips the scan step entirely."),
+      matchAddress: z.string().optional().describe("Force a specific address. Either a router address (e.g. '0301.3053') or an IP-form address 'ip[:port]' (e.g. '127.0.0.1:11740' for an SSH-tunnelled PLC) -- IP form binds via set_gateway_and_ip_address, no UDP discovery needed. Skips the scan step entirely."),
     },
     async (args: { projectFilePath: string; matchName?: string; matchDeviceId?: string; matchAddress?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);

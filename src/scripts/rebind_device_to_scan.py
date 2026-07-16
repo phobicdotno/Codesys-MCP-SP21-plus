@@ -116,7 +116,17 @@ try:
     # and re-establish a live session, which login()/download() depend
     # on. Skipping when address matches leaves the binding stale.
     print("DEBUG: rebinding (cached='%s' new='%s' reason=%s)" % (cached_address, new_address, reason))
-    target.set_gateway_and_address(gw, new_address)
+    # IP-form addresses (e.g. '127.0.0.1:11740' for an SSH-tunnelled PLC) are
+    # not valid node addresses for set_gateway_and_address ("Invalid address
+    # format"). Use set_gateway_and_ip_address (ScriptDeviceObject, since
+    # 3.5.8.0) which takes "ip[:port]" and connects the block driver directly
+    # by IP -- no UDP discovery needed.
+    import re as _re
+    if _re.match(r'^\d{1,3}(\.\d{1,3}){3}(:\d+)?$', new_address):
+        print("DEBUG: IP-form address detected -> set_gateway_and_ip_address")
+        target.set_gateway_and_ip_address(gw, new_address)
+    else:
+        target.set_gateway_and_address(gw, new_address)
     try:
         primary_project.save()
     except Exception as e:
