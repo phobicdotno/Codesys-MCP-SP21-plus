@@ -574,6 +574,60 @@ const RESERVED_IEC_IDENTIFIERS = new Set([
 ]);
 
 /**
+ * IEC 61131-3 ST reserved KEYWORDS -- these are rejected by the CODESYS
+ * compiler when used as variable names, case-INSENSITIVELY (IEC identifiers
+ * and keywords are case-insensitive; `by`, `By`, and `BY` are all the FOR-loop
+ * step keyword). Found the hard way 2026-07-16: `by : BYTE;` fails to compile.
+ *
+ * Sources: IEC 61131-3 (3rd ed.) keyword tables; CODESYS export-format keyword
+ * list (content.helpme-codesys.com _cds_keywords.html). Deliberately EXCLUDES
+ * standard-function names (MIN, MAX, ABS, ADD, MUL, SEL, ...) -- those are
+ * not confirmed to be rejected as variable names, and a false positive here
+ * blocks a legitimate call. Extend only with words the compiler provably
+ * refuses.
+ */
+const RESERVED_IEC_KEYWORDS = new Set([
+  // Control flow
+  'IF', 'THEN', 'ELSE', 'ELSIF', 'END_IF',
+  'CASE', 'OF', 'END_CASE',
+  'FOR', 'TO', 'BY', 'DO', 'END_FOR',
+  'WHILE', 'END_WHILE',
+  'REPEAT', 'UNTIL', 'END_REPEAT',
+  'RETURN', 'EXIT', 'CONTINUE', 'JMP',
+  // Boolean / arithmetic operator keywords
+  'AND', 'OR', 'XOR', 'NOT', 'MOD', 'AND_THEN', 'OR_ELSE',
+  // POU / scope structure
+  'PROGRAM', 'END_PROGRAM',
+  'FUNCTION', 'END_FUNCTION',
+  'FUNCTION_BLOCK', 'END_FUNCTION_BLOCK',
+  'METHOD', 'END_METHOD',
+  'PROPERTY', 'END_PROPERTY',
+  'INTERFACE', 'END_INTERFACE',
+  'ACTION', 'END_ACTION',
+  'STRUCT', 'END_STRUCT',
+  'TYPE', 'END_TYPE',
+  'UNION', 'END_UNION',
+  'VAR', 'VAR_INPUT', 'VAR_OUTPUT', 'VAR_IN_OUT', 'VAR_GLOBAL',
+  'VAR_TEMP', 'VAR_STAT', 'VAR_EXTERNAL', 'VAR_ACCESS', 'VAR_CONFIG',
+  'END_VAR',
+  'CONSTANT', 'RETAIN', 'PERSISTENT', 'AT',
+  'READ_ONLY', 'READ_WRITE',
+  // Elementary / generic types
+  'BOOL', 'BIT', 'BYTE', 'WORD', 'DWORD', 'LWORD',
+  'SINT', 'INT', 'DINT', 'LINT', 'USINT', 'UINT', 'UDINT', 'ULINT',
+  'REAL', 'LREAL', 'STRING', 'WSTRING',
+  'TIME', 'LTIME', 'DATE', 'LDATE', 'TIME_OF_DAY', 'TOD', 'DATE_AND_TIME', 'DT',
+  'ARRAY', 'POINTER', 'REFERENCE',
+  'ANY', 'ANY_BIT', 'ANY_DATE', 'ANY_INT', 'ANY_NUM', 'ANY_REAL', 'ANY_STRING',
+  // Literals / OOP
+  'TRUE', 'FALSE',
+  'EXTENDS', 'IMPLEMENTS', 'THIS', 'SUPER', 'ABSTRACT',
+  'PUBLIC', 'PRIVATE', 'PROTECTED', 'INTERNAL',
+  // CODESYS operators that are keywords in declarations/expressions
+  'ADR', 'SIZEOF', 'BITADR', '__NEW', '__DELETE', '__TRY', '__CATCH', '__FINALLY', '__ENDTRY',
+]);
+
+/**
  * Scan an IEC declarationCode block for VAR declarations whose variable
  * name collides with a reserved identifier. Returns one warning string
  * per offending name. Empty list if the input is empty/safe.
@@ -584,22 +638,34 @@ const RESERVED_IEC_IDENTIFIERS = new Set([
  * `s, t : BOOL;` only catch the last comma-separated name (rare but
  * worth a future tightening).
  */
-function findReservedIecIdentifiers(declarationCode: string | undefined): string[] {
+export function findReservedIecIdentifiers(declarationCode: string | undefined): string[] {
   if (!declarationCode) return [];
   const warnings: string[] = [];
   const seen = new Set<string>();
-  const pattern = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[A-Za-z_]/gm;
+  // Match declaration lines `<name>[, <name>...] [AT %XX] : <type>` and check
+  // EVERY comma-separated name, not just the first/last one.
+  const pattern = /^\s*((?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)*[A-Za-z_][A-Za-z0-9_]*)\s*(?:AT\s+%[\w.]+\s*)?:\s*[A-Za-z_]/gim;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(declarationCode)) !== null) {
-    const name = match[1];
-    if (RESERVED_IEC_IDENTIFIERS.has(name) && !seen.has(name)) {
-      seen.add(name);
-      warnings.push(
-        `Reserved IEC identifier '${name}' used as variable name. ` +
-        `Single-letter names like s/t/d/m/h/ms/us/ns are time-literal suffixes (T#5s, T#100ms); ` +
-        `S/R conflict with SR/RS flip-flop semantics. ` +
-        `Rename to a meaningful identifier (e.g. '${name}Inst', '${name}Sample', or use a Hungarian-style prefix like 'st'/'fb'/'b'/'n').`
-      );
+    for (const rawName of match[1].split(',')) {
+      const name = rawName.trim();
+      if (!name || seen.has(name)) continue;
+      if (RESERVED_IEC_KEYWORDS.has(name.toUpperCase())) {
+        seen.add(name);
+        warnings.push(
+          `'${name}' is an IEC 61131-3 reserved keyword (keywords are case-insensitive: ` +
+          `'by'/'By'/'BY' are all the FOR-loop step keyword) and cannot be a variable name. ` +
+          `Rename it (e.g. '${name}Val', or a Hungarian-style prefix like 'st'/'fb'/'b'/'n').`
+        );
+      } else if (RESERVED_IEC_IDENTIFIERS.has(name)) {
+        seen.add(name);
+        warnings.push(
+          `Reserved IEC identifier '${name}' used as variable name. ` +
+          `Single-letter names like s/t/d/m/h/ms/us/ns are time-literal suffixes (T#5s, T#100ms); ` +
+          `S/R conflict with SR/RS flip-flop semantics. ` +
+          `Rename to a meaningful identifier (e.g. '${name}Inst', '${name}Sample', or use a Hungarian-style prefix like 'st'/'fb'/'b'/'n').`
+        );
+      }
     }
   }
   return warnings;
@@ -1227,17 +1293,32 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
 
   s.tool(
     'create_pou',
-    'Creates a new Program, Function Block, or Function POU within the specified CODESYS project.',
+    'Creates a new Program, Function Block, or Function POU within the specified CODESYS project. Pass declarationCode/implementationCode to set the POU body in the same call (otherwise the POU is created with the IDE default stub and needs a follow-up set_pou_code).',
     {
       projectFilePath: z.string().describe("Path to the project file."),
       name: z.string().describe("Name for the new POU (must be a valid IEC identifier)."),
       type: z.string().describe("Type of POU: Program, FunctionBlock, or Function."),
       language: z.string().describe("Implementation language: ST, LD, FBD, SFC, IL, or CFC."),
       parentPath: z.string().describe("Relative path under project root or application (e.g., 'Application')."),
+      declarationCode: z.string().optional().describe("Full declaration part (PROGRAM/FUNCTION_BLOCK ... VAR...END_VAR) to apply after creation. ST only."),
+      implementationCode: z.string().optional().describe("Implementation logic to apply after creation. ST only."),
     },
-    async (args: { projectFilePath: string; name: string; type: string; language: string; parentPath: string }) => {
+    async (args: { projectFilePath: string; name: string; type: string; language: string; parentPath: string; declarationCode?: string; implementationCode?: string }) => {
+      // Same reserved-identifier gate as set_pou_code: refuse before touching the project.
+      const reservedWarnings = findReservedIecIdentifiers(args.declarationCode);
+      if (reservedWarnings.length > 0) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Refused: declarationCode contains IEC reserved identifier(s). POU NOT created. Fix and retry.\n\n  - ${reservedWarnings.join('\n  - ')}`,
+          }],
+          isError: true,
+        };
+      }
       const escProjPath = resolvePath(args.projectFilePath, workspaceDir);
       const sanParentPath = sanitizePouPath(args.parentPath);
+      const sanDecl = (args.declarationCode ?? '').replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
+      const sanImpl = (args.implementationCode ?? '').replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
       const script = scriptManager.prepareScriptWithHelpers(
         'create_pou',
         {
@@ -1246,13 +1327,18 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
           POU_TYPE_STR: args.type,
           IMPL_LANGUAGE_STR: args.language,
           PARENT_PATH: sanParentPath,
+          DECLARATION_CONTENT: sanDecl,
+          IMPLEMENTATION_CONTENT: sanImpl,
+          SET_DECLARATION: args.declarationCode !== undefined ? 'True' : 'False',
+          SET_IMPLEMENTATION: args.implementationCode !== undefined ? 'True' : 'False',
         },
         ['ensure_project_open', 'find_object_by_path']
       );
       const result = await executor.executeScript(script);
+      const withCode = (args.declarationCode !== undefined || args.implementationCode !== undefined) ? ' Code applied.' : '';
       return await formatModifyingResponse(
         result,
-        `POU '${args.name}' created in '${sanParentPath}' of ${args.projectFilePath}. Project saved.`,
+        `POU '${args.name}' created in '${sanParentPath}' of ${args.projectFilePath}.${withCode} Project saved.`,
         escProjPath,
         mirrorCtx
       );
@@ -1354,16 +1440,31 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
 
   s.tool(
     'create_method',
-    'Creates a new Method within a specific Function Block POU.',
+    'Creates a new Method within a specific Function Block POU. Pass declarationCode/implementationCode to set the method body in the same call (otherwise the method is created empty and needs a follow-up set_pou_code).',
     {
       projectFilePath: z.string().describe("Path to the project file."),
       parentPouPath: z.string().describe("Relative path to the parent Function Block POU (e.g., 'Application/MyFB')."),
       methodName: z.string().describe("Name of the new method (must be a valid IEC identifier)."),
       returnType: z.string().optional().describe("Return type (e.g., 'BOOL', 'INT'). Leave empty or omit for no return value."),
+      declarationCode: z.string().optional().describe("Full declaration part (METHOD ... VAR...END_VAR) to apply after creation. If omitted, the IDE default stub is kept."),
+      implementationCode: z.string().optional().describe("Implementation logic to apply after creation. If omitted, the body is left empty."),
     },
-    async (args: { projectFilePath: string; parentPouPath: string; methodName: string; returnType?: string }) => {
+    async (args: { projectFilePath: string; parentPouPath: string; methodName: string; returnType?: string; declarationCode?: string; implementationCode?: string }) => {
+      // Same reserved-identifier gate as set_pou_code: refuse before touching the project.
+      const reservedWarnings = findReservedIecIdentifiers(args.declarationCode);
+      if (reservedWarnings.length > 0) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Refused: declarationCode contains IEC reserved identifier(s). Method NOT created. Fix and retry.\n\n  - ${reservedWarnings.join('\n  - ')}`,
+          }],
+          isError: true,
+        };
+      }
       const escProjPath = resolvePath(args.projectFilePath, workspaceDir);
       const sanParentPath = sanitizePouPath(args.parentPouPath);
+      const sanDecl = (args.declarationCode ?? '').replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
+      const sanImpl = (args.implementationCode ?? '').replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
       const script = scriptManager.prepareScriptWithHelpers(
         'create_method',
         {
@@ -1371,13 +1472,18 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
           PARENT_POU_FULL_PATH: sanParentPath,
           METHOD_NAME: args.methodName.trim(),
           RETURN_TYPE: (args.returnType ?? '').trim(),
+          DECLARATION_CONTENT: sanDecl,
+          IMPLEMENTATION_CONTENT: sanImpl,
+          SET_DECLARATION: args.declarationCode !== undefined ? 'True' : 'False',
+          SET_IMPLEMENTATION: args.implementationCode !== undefined ? 'True' : 'False',
         },
         ['ensure_project_open', 'find_object_by_path']
       );
       const result = await executor.executeScript(script);
+      const withCode = (args.declarationCode !== undefined || args.implementationCode !== undefined) ? ' Code applied.' : '';
       return await formatModifyingResponse(
         result,
-        `Method '${args.methodName}' created under '${sanParentPath}' in ${args.projectFilePath}. Project saved.`,
+        `Method '${args.methodName}' created under '${sanParentPath}' in ${args.projectFilePath}.${withCode} Project saved.`,
         escProjPath,
         mirrorCtx
       );

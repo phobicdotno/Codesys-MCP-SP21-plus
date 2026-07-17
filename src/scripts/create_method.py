@@ -3,6 +3,10 @@ import sys, scriptengine as script_engine, os, traceback
 PARENT_POU_FULL_PATH = "{PARENT_POU_FULL_PATH}" # e.g., "Application/MyFB"
 METHOD_NAME = "{METHOD_NAME}"
 RETURN_TYPE = "{RETURN_TYPE}" # Can be empty string for no return type
+DECLARATION_CONTENT = """{DECLARATION_CONTENT}"""
+IMPLEMENTATION_CONTENT = """{IMPLEMENTATION_CONTENT}"""
+SET_DECLARATION = {SET_DECLARATION}      # True only when the caller provided declarationCode
+SET_IMPLEMENTATION = {SET_IMPLEMENTATION} # True only when the caller provided implementationCode
 # Optional: Language
 # LANG_GUID_STR = "{LANG_GUID_STR}" # Example if needed
 
@@ -40,6 +44,27 @@ try:
     if new_method_object:
         new_meth_name = getattr(new_method_object, 'get_name', lambda: METHOD_NAME)()
         print("DEBUG: Method object created: %s" % new_meth_name)
+
+        # --- APPLY PROVIDED CODE (same API as set_pou_code: ScriptTextualObject
+        #     textual_declaration / textual_implementation .replace()). If the
+        #     caller provided code and it cannot be applied, FAIL LOUDLY --
+        #     an empty method that compiles clean and does nothing is a trap. ---
+        if SET_DECLARATION:
+            decl_obj = getattr(new_method_object, 'textual_declaration', None)
+            if decl_obj is not None and hasattr(decl_obj, 'replace'):
+                decl_obj.replace(DECLARATION_CONTENT)
+                print("DEBUG: Applied declarationCode to new method.")
+            else:
+                error_message = "declarationCode was provided but method '%s' has no writable textual_declaration." % new_meth_name
+                print(error_message); print("SCRIPT_ERROR: %s" % error_message); sys.exit(1)
+        if SET_IMPLEMENTATION:
+            impl_obj = getattr(new_method_object, 'textual_implementation', None)
+            if impl_obj is not None and hasattr(impl_obj, 'replace'):
+                impl_obj.replace(IMPLEMENTATION_CONTENT)
+                print("DEBUG: Applied implementationCode to new method.")
+            else:
+                error_message = "implementationCode was provided but method '%s' has no writable textual_implementation." % new_meth_name
+                print(error_message); print("SCRIPT_ERROR: %s" % error_message); sys.exit(1)
 
         # --- SAVE THE PROJECT TO PERSIST THE NEW METHOD OBJECT ---
         try:

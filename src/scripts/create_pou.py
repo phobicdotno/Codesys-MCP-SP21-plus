@@ -4,6 +4,10 @@ POU_NAME = "{POU_NAME}"
 POU_TYPE_STR = "{POU_TYPE_STR}"
 IMPL_LANGUAGE_STR = "{IMPL_LANGUAGE_STR}"
 PARENT_PATH_REL = "{PARENT_PATH}"
+DECLARATION_CONTENT = """{DECLARATION_CONTENT}"""
+IMPLEMENTATION_CONTENT = """{IMPLEMENTATION_CONTENT}"""
+SET_DECLARATION = {SET_DECLARATION}      # True only when the caller provided declarationCode
+SET_IMPLEMENTATION = {SET_IMPLEMENTATION} # True only when the caller provided implementationCode
 
 pou_type_map = {
     "Program": script_engine.PouType.Program,
@@ -97,6 +101,27 @@ try:
     if new_pou:
         new_pou_name = getattr(new_pou, 'get_name', lambda: POU_NAME)()
         print("DEBUG: POU object created: %s" % new_pou_name)
+
+        # --- APPLY PROVIDED CODE (same API as set_pou_code: ScriptTextualObject
+        #     textual_declaration / textual_implementation .replace()). If the
+        #     caller provided code and it cannot be applied, FAIL LOUDLY --
+        #     an empty POU that compiles clean and does nothing is a trap. ---
+        if SET_DECLARATION:
+            decl_obj = getattr(new_pou, 'textual_declaration', None)
+            if decl_obj is not None and hasattr(decl_obj, 'replace'):
+                decl_obj.replace(DECLARATION_CONTENT)
+                print("DEBUG: Applied declarationCode to new POU.")
+            else:
+                error_message = "declarationCode was provided but POU '%s' has no writable textual_declaration (non-ST language?)." % new_pou_name
+                print(error_message); print("SCRIPT_ERROR: %s" % error_message); sys.exit(1)
+        if SET_IMPLEMENTATION:
+            impl_obj = getattr(new_pou, 'textual_implementation', None)
+            if impl_obj is not None and hasattr(impl_obj, 'replace'):
+                impl_obj.replace(IMPLEMENTATION_CONTENT)
+                print("DEBUG: Applied implementationCode to new POU.")
+            else:
+                error_message = "implementationCode was provided but POU '%s' has no writable textual_implementation (non-ST language?)." % new_pou_name
+                print(error_message); print("SCRIPT_ERROR: %s" % error_message); sys.exit(1)
 
         # --- SAVE THE PROJECT TO PERSIST THE NEW POU ---
         try:
