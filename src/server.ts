@@ -2746,18 +2746,23 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
 
   s.tool(
     'import_native',
-    "Imports a CODESYS native export file into the top level of the project (project.import_native) and saves.",
+    "Imports a CODESYS native export file and saves. Pass parentObjectPath to import UNDER that object (ScriptObject.import_native) -- e.g. 'Application/MRLib' to land a library subtree inside an application. Omit it to import at the project top level (the POU pool) -- note that root-level objects CANNOT be moved into an application afterwards, so pick the right parent up front.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
       importPath: z.string().describe("Path of the native export file to import."),
+      parentObjectPath: z.string().optional().describe("Object path to import under (e.g. 'Application/MRLib'). Omit for project top level."),
     },
-    async (args: { projectFilePath: string; importPath: string }) => {
+    async (args: { projectFilePath: string; importPath: string; parentObjectPath?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const escImport = resolvePath(args.importPath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'import_native',
-        { PROJECT_FILE_PATH: escaped, IMPORT_PATH: escImport },
-        ['ensure_project_open']
+        {
+          PROJECT_FILE_PATH: escaped,
+          IMPORT_PATH: escImport,
+          PARENT_OBJECT_PATH: args.parentObjectPath ? sanitizePouPath(args.parentObjectPath) : '',
+        },
+        ['ensure_project_open', 'find_object_by_path']
       );
       const result = await executor.executeScript(script, 120_000);
       return await formatModifyingResponse(result, `Native import from: ${escImport}. Project saved.`, escaped, mirrorCtx);

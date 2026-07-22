@@ -1,14 +1,26 @@
 import sys, scriptengine as script_engine, os, traceback
 
 IMPORT_PATH = r"{IMPORT_PATH}"
+PARENT_OBJECT_PATH = r"{PARENT_OBJECT_PATH}"
 
 try:
-    print("DEBUG: import_native script: path='%s', Project='%s'" % (IMPORT_PATH, PROJECT_FILE_PATH))
+    print("DEBUG: import_native script: path='%s', parent='%s', Project='%s'" % (IMPORT_PATH, PARENT_OBJECT_PATH, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
     if not IMPORT_PATH or not os.path.isfile(IMPORT_PATH):
         raise ValueError("Import file does not exist: %s" % IMPORT_PATH)
 
-    result = primary_project.import_native(IMPORT_PATH)
+    if PARENT_OBJECT_PATH:
+        # Import UNDER a specific object (ScriptObject.import_native, API >= 3.4.4.0).
+        # Without this, project-level import lands at the PROJECT ROOT (the POU
+        # pool, visible only in the POUs view) -- and CODESYS refuses to move
+        # root-level objects into an application afterwards ("Cannot move X
+        # from '<root>'"), so a wrong-level import is unrecoverable by script.
+        parent_object = find_object_by_path_robust(primary_project, PARENT_OBJECT_PATH, "import parent")
+        if parent_object is None:
+            raise ValueError("Parent object not found at path: %s" % PARENT_OBJECT_PATH)
+        result = parent_object.import_native(IMPORT_PATH)
+    else:
+        result = primary_project.import_native(IMPORT_PATH)
     primary_project.save()
     print("DEBUG: import_native + save OK")
 
