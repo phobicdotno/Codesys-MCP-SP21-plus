@@ -34,6 +34,20 @@ try:
     primary_project.close()
     print("DEBUG: flush_editor_views: project closed to dispose editor views: %s" % project_path)
 
+    # CODESYS persists the window layout (open editors) in the per-user
+    # sidecar "<Project>-<user>-<machine>.opt" and RESTORES it on open --
+    # so a close/reopen (or even a full IDE restart) brings all views back.
+    # Delete the per-user .opt (pure UI state, regenerates); keep AllUsers.
+    try:
+        proj_dir = os.path.dirname(project_path)
+        base = os.path.splitext(os.path.basename(project_path))[0]
+        for fn in os.listdir(proj_dir):
+            if fn.startswith(base + "-") and fn.endswith(".opt") and not fn.endswith("-AllUsers.opt"):
+                os.remove(os.path.join(proj_dir, fn))
+                print("DEBUG: flush_editor_views: deleted window-layout sidecar: %s" % fn)
+    except Exception as opt_err:
+        print("WARN: flush_editor_views: could not delete .opt sidecar: %s" % opt_err)
+
     reopened = script_engine.projects.open(project_path)
     print("DEBUG: flush_editor_views: project reopened: %s" % reopened.path)
     print("SCRIPT_SUCCESS: Editor views flushed (project close/reopen).")
