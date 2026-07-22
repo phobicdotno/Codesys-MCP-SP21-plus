@@ -1011,6 +1011,36 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
   // TS2589 deep type instantiation with MCP SDK generics + Zod.
   const s = server as any;
 
+  // ─── Editor-view pressure guard ──────────────────────────────────────
+  // Every scripted textual edit / object creation opens an editor view in
+  // the visible IDE, and the ScriptEngine has NO API to close views
+  // (ScriptCommands is lookup-only; editors are invisible to UIA). After
+  // ~40-60 edits the IDE runs out of UI resources ("Please close some
+  // views") and every script call starts timing out. Mitigation: before
+  // the Nth edit since the last flush, close+reopen the project (disposes
+  // all views, ~seconds). Threshold via CODESYS_EDITOR_FLUSH_THRESHOLD
+  // (default 20; 0 disables).
+  let editorViewEdits = 0;
+  const editorFlushThreshold = (() => {
+    const raw = process.env.CODESYS_EDITOR_FLUSH_THRESHOLD;
+    if (raw === undefined || raw === '') return 20;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : 20;
+  })();
+  const maybeFlushEditorViews = async (): Promise<string> => {
+    editorViewEdits++;
+    if (editorFlushThreshold === 0 || editorViewEdits < editorFlushThreshold) return '';
+    const script = scriptManager.prepareScript('flush_editor_views', {});
+    const res = await executor.executeScript(script, 120_000);
+    editorViewEdits = 0;
+    if (res.success) {
+      serverLog.info(`editor-view flush: project closed+reopened after ${editorFlushThreshold} edits.`);
+      return `NOTE: editor views flushed (project close/reopen) to prevent IDE UI-resource exhaustion.\n`;
+    }
+    serverLog.warn(`editor-view flush failed (continuing): ${res.error ?? 'unknown'}`);
+    return `WARN: editor-view flush failed -- if the IDE warns about low UI resources, run shutdown_codesys and retry.\n`;
+  };
+
   // ─── Management Tools ────────────────────────────────────────────────
 
   s.tool(
@@ -1334,11 +1364,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         },
         ['ensure_project_open', 'find_object_by_path']
       );
+      const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
       const withCode = (args.declarationCode !== undefined || args.implementationCode !== undefined) ? ' Code applied.' : '';
       return await formatModifyingResponse(
         result,
-        `POU '${args.name}' created in '${sanParentPath}' of ${args.projectFilePath}.${withCode} Project saved.`,
+        `${flushNote}POU '${args.name}' created in '${sanParentPath}' of ${args.projectFilePath}.${withCode} Project saved.`,
         escProjPath,
         mirrorCtx
       );
@@ -1396,10 +1427,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         },
         ['ensure_project_open', 'find_object_by_path']
       );
+      const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(
         result,
-        `Code set for '${sanPouPath}' in ${args.projectFilePath}. Project saved.`,
+        `${flushNote}Code set for '${sanPouPath}' in ${args.projectFilePath}. Project saved.`,
         escProjPath,
         mirrorCtx
       );
@@ -1428,10 +1460,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         },
         ['ensure_project_open', 'find_object_by_path']
       );
+      const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(
         result,
-        `Property '${args.propertyName}' created under '${sanParentPath}' in ${args.projectFilePath}. Project saved.`,
+        `${flushNote}Property '${args.propertyName}' created under '${sanParentPath}' in ${args.projectFilePath}. Project saved.`,
         escProjPath,
         mirrorCtx
       );
@@ -1479,11 +1512,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         },
         ['ensure_project_open', 'find_object_by_path']
       );
+      const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
       const withCode = (args.declarationCode !== undefined || args.implementationCode !== undefined) ? ' Code applied.' : '';
       return await formatModifyingResponse(
         result,
-        `Method '${args.methodName}' created under '${sanParentPath}' in ${args.projectFilePath}.${withCode} Project saved.`,
+        `${flushNote}Method '${args.methodName}' created under '${sanParentPath}' in ${args.projectFilePath}.${withCode} Project saved.`,
         escProjPath,
         mirrorCtx
       );
@@ -1676,10 +1710,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         },
         ['ensure_project_open', 'find_object_by_path']
       );
+      const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(
         result,
-        `DUT '${args.name}' (${args.dutType}) created in '${sanParentPath}' of ${args.projectFilePath}. Project saved.`,
+        `${flushNote}DUT '${args.name}' (${args.dutType}) created in '${sanParentPath}' of ${args.projectFilePath}. Project saved.`,
         escProjPath,
         mirrorCtx
       );
@@ -1721,10 +1756,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         },
         ['ensure_project_open', 'find_object_by_path']
       );
+      const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(
         result,
-        `GVL '${args.name}' created in '${sanParentPath}' of ${args.projectFilePath}. Project saved.`,
+        `${flushNote}GVL '${args.name}' created in '${sanParentPath}' of ${args.projectFilePath}. Project saved.`,
         escProjPath,
         mirrorCtx
       );

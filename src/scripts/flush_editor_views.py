@@ -1,0 +1,46 @@
+import sys, scriptengine as script_engine, os, traceback
+
+# Close + reopen the primary project to dispose accumulated editor views.
+#
+# Why: every scripted textual_declaration/textual_implementation write (and
+# object creation) opens an editor view in the visible IDE, and the CODESYS
+# ScriptEngine has NO API to close views -- ScriptCommands is lookup-only
+# (name/description/tokens/guid, no execute; see ScriptSystem.pyi stubs and
+# helpme-codesys ScriptingEngine/ScriptSystem.html), and editors are not
+# reachable via UIA either (custom WinForms menus). After ~40-60 scripted
+# edits the IDE pops "The user interface is running low on system resources"
+# and every subsequent script call times out.
+#
+# Closing the project disposes all of its editor views; reopening restores
+# the invariant that the primary project stays open for the next tool call.
+
+try:
+    primary_project = script_engine.projects.primary
+    if primary_project is None:
+        print("DEBUG: flush_editor_views: no primary project open; nothing to flush.")
+        print("SCRIPT_SUCCESS: No project open, nothing flushed.")
+        sys.exit(0)
+
+    project_path = primary_project.path
+    dirty = False
+    try:
+        dirty = bool(primary_project.dirty)
+    except Exception:
+        pass
+    if dirty:
+        primary_project.save()
+        print("DEBUG: flush_editor_views: unsaved changes saved before close.")
+
+    primary_project.close()
+    print("DEBUG: flush_editor_views: project closed to dispose editor views: %s" % project_path)
+
+    reopened = script_engine.projects.open(project_path)
+    print("DEBUG: flush_editor_views: project reopened: %s" % reopened.path)
+    print("SCRIPT_SUCCESS: Editor views flushed (project close/reopen).")
+    sys.exit(0)
+except Exception as e:
+    detailed_error = traceback.format_exc()
+    error_message = "Error flushing editor views: %s\n%s" % (e, detailed_error)
+    print(error_message)
+    print("SCRIPT_ERROR: %s" % error_message)
+    sys.exit(1)
