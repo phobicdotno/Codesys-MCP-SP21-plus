@@ -52,6 +52,127 @@ VERSION_GVL_DECLARATION_TEMPLATE = (
 )
 
 
+# --- Library manifest -------------------------------------------------------
+# In addition to sVersion, the GVL carries the project's library references
+# (name + resolved version) as a runtime-readable array, so the running PLC
+# reports its full library manifest -- not just the app version. Refreshed on
+# every version bump (the release step), which is the point at which a library
+# change should be recorded anyway. (Follow-up: call this same maintenance from
+# add_library / remove_library so the manifest also refreshes on a bare lib
+# change with no bump -- not yet wired.)
+# Enumeration API (verified in list_project_libraries.py): walk the tree for
+# nodes whose has_library_manager property is True, then lm.references.
+
+def _lib_safe_get(obj, attr, default=None):
+    """getattr that swallows access exceptions and calls callables."""
+    try:
+        if not hasattr(obj, attr):
+            return default
+        v = getattr(obj, attr)
+        return v() if callable(v) else v
+    except Exception:
+        return default
+
+
+def _find_libman_containers(node, depth=0, max_depth=8):
+    """Yield every node whose has_library_manager property is True."""
+    out = []
+    if depth > max_depth:
+        return out
+    try:
+        if hasattr(node, 'has_library_manager'):
+            try:
+                if node.has_library_manager:
+                    out.append(node)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        children = node.get_children(False)
+    except Exception:
+        children = []
+    for child in children:
+        out.extend(_find_libman_containers(child, depth + 1, max_depth))
+    return out
+
+
+def _ascii_clean(s):
+    """Keep only printable ASCII and drop single quotes so the resulting text
+    is a valid, single-quote-safe ST string literal (CODESYS source is ASCII)."""
+    return ''.join(c for c in s if 32 <= ord(c) < 127 and c != "'")
+
+
+def _lib_entry_string(ref):
+    """Build a 'Namespace Version' string from a library reference. Pulls the
+    version out of the effective/default resolution string (e.g.
+    'CmpApp, 3.5.21.0 (System)' -> '3.5.21.0'; '* (System)' -> '*')."""
+    name = _lib_safe_get(ref, 'namespace') or _lib_safe_get(ref, 'name') or ''
+    eff = _lib_safe_get(ref, 'effective_resolution') \
+        or _lib_safe_get(ref, 'default_resolution') or ''
+    ver = ''
+    m = re.search(r',\s*(\*|\d+(?:\.\d+){1,3})\s*\(', str(eff))
+    if m:
+        ver = m.group(1)
+    if not ver:
+        m2 = re.search(r'(\d+(?:\.\d+){1,3})', str(eff))
+        if m2:
+            ver = m2.group(1)
+    entry = (str(name) + ' ' + ver).strip()
+    return _ascii_clean(entry)
+
+
+def enumerate_libraries(primary_project):
+    """Return a sorted, de-duplicated list of 'Name Version' strings for every
+    library reference across all library-manager containers. Best-effort:
+    returns [] on any failure so the version bump still succeeds."""
+    entries = set()
+    try:
+        for container in _find_libman_containers(primary_project):
+            try:
+                lm = container.get_library_manager()
+            except Exception:
+                continue
+            try:
+                refs = lm.references
+            except Exception:
+                continue
+            try:
+                for ref in refs:
+                    e = _lib_entry_string(ref)
+                    if e:
+                        entries.add(e)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return sorted(entries)
+
+
+def build_version_gvl_declaration(version_str, libraries):
+    """Build the full _MCP_PROJECT_VERSION GVL declaration: the sVersion
+    anchor plus the library manifest (count + ARRAY OF STRING). The array is
+    omitted when the manifest is empty (ARRAY[1..0] is invalid ST)."""
+    lines = [
+        "{attribute 'qualified_only'}",
+        "VAR_GLOBAL",
+        "    sVersion : STRING := '%s';" % version_str,
+        "    // Library manifest (namespace + resolved version) -- maintained by",
+        "    // bump_project_version; reflects the library references at last bump.",
+        "    uiLibraryCount : UINT := %d;" % len(libraries),
+    ]
+    n = len(libraries)
+    if n > 0:
+        lines.append("    asLibraries : ARRAY[1..%d] OF STRING(79) := [" % n)
+        for i, lib in enumerate(libraries):
+            comma = ',' if i < n - 1 else ''
+            lines.append("        '%s'%s" % (lib[:79], comma))
+        lines.append("    ];")
+    lines.append("END_VAR")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def parse_version(v):
     """Parse a version-like value into a 4-tuple of ints, defaulting missing
     parts to 0. Accepts None, '', '1.2', '1.2.3', '1.2.3.4', or a
@@ -133,7 +254,10 @@ def maintain_version_gvl(primary_project, version_str):
         print("WARNING: no active Application found -- cannot maintain %s GVL" % VERSION_GVL_NAME)
         return False
 
-    decl = VERSION_GVL_DECLARATION_TEMPLATE % version_str
+    libraries = enumerate_libraries(primary_project)
+    decl = build_version_gvl_declaration(version_str, libraries)
+    print("DEBUG: library manifest: %d reference(s) enumerated for %s" % (
+        len(libraries), VERSION_GVL_NAME))
 
     # Try to find existing GVL with this name
     existing = None
