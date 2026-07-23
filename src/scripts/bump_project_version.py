@@ -54,9 +54,10 @@ VERSION_GVL_DECLARATION_TEMPLATE = (
 
 # --- Library manifest -------------------------------------------------------
 # In addition to sVersion, the GVL carries the project's library references
-# (name + resolved version) as one runtime-readable STRING per reference (same
-# style as sVersion, sLib01..sLibNN + uiLibraryCount -- NOT an array), so the
-# running PLC reports its full library manifest -- not just the app version.
+# as one runtime-readable STRING per library where the variable NAME is the
+# library namespace and the value is its version (same self-describing style as
+# sVersion, plus uiLibraryCount -- NOT an array), so the running PLC reports its
+# full library manifest -- not just the app version.
 # Refreshed on
 # every version bump (the release step), which is the point at which a library
 # change should be recorded anyway. (Follow-up: call this same maintenance from
@@ -105,11 +106,30 @@ def _ascii_clean(s):
     return ''.join(c for c in s if 32 <= ord(c) < 127 and c != "'")
 
 
-def _lib_entry_string(ref):
-    """Build a 'Namespace Version' string from a library reference. Pulls the
-    version out of the effective/default resolution string (e.g.
-    'CmpApp, 3.5.21.0 (System)' -> '3.5.21.0'; '* (System)' -> '*')."""
-    name = _lib_safe_get(ref, 'namespace') or _lib_safe_get(ref, 'name') or ''
+RESERVED_GVL_NAMES = ('sVersion', 'uiLibraryCount')
+
+
+def _sanitize_ident(name):
+    """Coerce a library namespace into a valid IEC identifier for use as a GVL
+    variable name: keep [A-Za-z0-9_], map the rest to '_', and prefix '_' if it
+    would start with a digit. Namespaces are normally already valid identifiers
+    (they qualify library calls in code); this is a defensive guard."""
+    out = []
+    for c in name:
+        out.append(c if (c.isalnum() or c == '_') else '_')
+    s = ''.join(out) or 'Lib'
+    if s[0].isdigit():
+        s = '_' + s
+    return s
+
+
+def _lib_name_version(ref):
+    """Return (identifier, version) for a library reference: identifier from the
+    namespace (sanitized to a valid IEC name), version from the effective/default
+    resolution string ('CmpApp, 3.5.21.0 (System)' -> '3.5.21.0';
+    '* (System)' -> '*'; none found -> '')."""
+    raw = _lib_safe_get(ref, 'namespace') or _lib_safe_get(ref, 'name') or ''
+    name = _sanitize_ident(_ascii_clean(str(raw)))
     eff = _lib_safe_get(ref, 'effective_resolution') \
         or _lib_safe_get(ref, 'default_resolution') or ''
     ver = ''
@@ -120,15 +140,15 @@ def _lib_entry_string(ref):
         m2 = re.search(r'(\d+(?:\.\d+){1,3})', str(eff))
         if m2:
             ver = m2.group(1)
-    entry = (str(name) + ' ' + ver).strip()
-    return _ascii_clean(entry)
+    return (name, _ascii_clean(ver))
 
 
 def enumerate_libraries(primary_project):
-    """Return a sorted, de-duplicated list of 'Name Version' strings for every
-    library reference across all library-manager containers. Best-effort:
-    returns [] on any failure so the version bump still succeeds."""
-    entries = set()
+    """Return a sorted list of (identifier, version) for every library reference
+    across all library-manager containers, de-duplicated by identifier (first
+    non-empty version wins). Best-effort: returns [] on any failure so the
+    version bump still succeeds."""
+    by_name = {}
     try:
         for container in _find_libman_containers(primary_project):
             try:
@@ -141,32 +161,35 @@ def enumerate_libraries(primary_project):
                 continue
             try:
                 for ref in refs:
-                    e = _lib_entry_string(ref)
-                    if e:
-                        entries.add(e)
+                    name, ver = _lib_name_version(ref)
+                    if not name or name in RESERVED_GVL_NAMES:
+                        continue
+                    if name not in by_name or (not by_name[name] and ver):
+                        by_name[name] = ver
             except Exception:
                 pass
     except Exception:
         pass
-    return sorted(entries)
+    return sorted(by_name.items())
 
 
 def build_version_gvl_declaration(version_str, libraries):
-    """Build the full _MCP_PROJECT_VERSION GVL declaration: the sVersion anchor
-    plus the library manifest as one scalar STRING per reference (same style as
-    sVersion, NOT an array -- so each is individually readable over the online
-    protocol exactly like sVersion). uiLibraryCount holds the number of
-    sLibNN entries. sLib01, sLib02, ... each := 'Namespace Version'."""
+    """Build the _MCP_PROJECT_VERSION GVL: the sVersion anchor plus the library
+    manifest as one scalar STRING per reference, where the VARIABLE NAME is the
+    library namespace and the value is its resolved version (same self-describing
+    style as sVersion -- each individually readable over the online protocol).
+    uiLibraryCount holds the number of library entries."""
     lines = [
         "{attribute 'qualified_only'}",
         "VAR_GLOBAL",
         "    sVersion : STRING := '%s';" % version_str,
-        "    // Library manifest -- one STRING per reference (namespace + resolved",
-        "    // version), maintained by bump_project_version; count in uiLibraryCount.",
+        "    // Library manifest -- one STRING per library: the variable NAME is the",
+        "    // library namespace, the value its resolved version. Maintained by",
+        "    // bump_project_version.",
         "    uiLibraryCount : UINT := %d;" % len(libraries),
     ]
-    for i, lib in enumerate(libraries, start=1):
-        lines.append("    sLib%02d : STRING := '%s';" % (i, lib[:79]))
+    for name, ver in libraries:
+        lines.append("    %s : STRING := '%s';" % (name, ver[:79]))
     lines.append("END_VAR")
     lines.append("")
     return "\n".join(lines)
