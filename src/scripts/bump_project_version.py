@@ -54,8 +54,10 @@ VERSION_GVL_DECLARATION_TEMPLATE = (
 
 # --- Library manifest -------------------------------------------------------
 # In addition to sVersion, the GVL carries the project's library references
-# (name + resolved version) as a runtime-readable array, so the running PLC
-# reports its full library manifest -- not just the app version. Refreshed on
+# (name + resolved version) as one runtime-readable STRING per reference (same
+# style as sVersion, sLib01..sLibNN + uiLibraryCount -- NOT an array), so the
+# running PLC reports its full library manifest -- not just the app version.
+# Refreshed on
 # every version bump (the release step), which is the point at which a library
 # change should be recorded anyway. (Follow-up: call this same maintenance from
 # add_library / remove_library so the manifest also refreshes on a bare lib
@@ -150,24 +152,21 @@ def enumerate_libraries(primary_project):
 
 
 def build_version_gvl_declaration(version_str, libraries):
-    """Build the full _MCP_PROJECT_VERSION GVL declaration: the sVersion
-    anchor plus the library manifest (count + ARRAY OF STRING). The array is
-    omitted when the manifest is empty (ARRAY[1..0] is invalid ST)."""
+    """Build the full _MCP_PROJECT_VERSION GVL declaration: the sVersion anchor
+    plus the library manifest as one scalar STRING per reference (same style as
+    sVersion, NOT an array -- so each is individually readable over the online
+    protocol exactly like sVersion). uiLibraryCount holds the number of
+    sLibNN entries. sLib01, sLib02, ... each := 'Namespace Version'."""
     lines = [
         "{attribute 'qualified_only'}",
         "VAR_GLOBAL",
         "    sVersion : STRING := '%s';" % version_str,
-        "    // Library manifest (namespace + resolved version) -- maintained by",
-        "    // bump_project_version; reflects the library references at last bump.",
+        "    // Library manifest -- one STRING per reference (namespace + resolved",
+        "    // version), maintained by bump_project_version; count in uiLibraryCount.",
         "    uiLibraryCount : UINT := %d;" % len(libraries),
     ]
-    n = len(libraries)
-    if n > 0:
-        lines.append("    asLibraries : ARRAY[1..%d] OF STRING(79) := [" % n)
-        for i, lib in enumerate(libraries):
-            comma = ',' if i < n - 1 else ''
-            lines.append("        '%s'%s" % (lib[:79], comma))
-        lines.append("    ];")
+    for i, lib in enumerate(libraries, start=1):
+        lines.append("    sLib%02d : STRING := '%s';" % (i, lib[:79]))
     lines.append("END_VAR")
     lines.append("")
     return "\n".join(lines)
