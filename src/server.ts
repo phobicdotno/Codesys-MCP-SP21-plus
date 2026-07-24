@@ -26,6 +26,7 @@ import { IdeBridgeClient, bridgeSchemaToZodShape, killOrphanedBridges } from './
 import { inspectProjectFile } from './inspect';
 import { parseProfileName } from './detect';
 import { decideOpenProjectPreflight } from './preflight';
+import { resolveVersionPin, decideVersionPin } from './version-pin';
 import { uncPathError } from './path-guard';
 import { readSelection } from './state-read';
 import { writeLiveValues } from './live-values-write';
@@ -1001,6 +1002,48 @@ function maybeOpenMirrorInVscode(projectFilePath: string, ctx: MirrorCtx): void 
     child.unref();
   } catch {
     // Swallow -- VSCode integration is a UX enhancement, never a blocker.
+  }
+}
+
+/**
+ * Guards every tool that opens a .project against a CODESYS version mismatch.
+ *
+ * The `open_project` pre-flight in src/preflight.ts was meant to do this, but
+ * it depends on src/inspect.ts reading the version out of the project ZIP --
+ * and a .project is not a ZIP, so inspection always throws and the pre-flight
+ * proceeds anyway. src/version-pin.ts reads the version from the repo instead.
+ *
+ * Returns an error response to return verbatim, or a (possibly empty) warning
+ * prefix for the success message.
+ */
+function enforceVersionPin(
+  projectFilePath: string,
+  opts: { saves: boolean; allowUpgrade?: boolean; profileName: string }
+): { error?: { content: { type: 'text'; text: string }[]; isError: true }; warning: string } {
+  try {
+    const serverProfile = parseProfileName(opts.profileName) ?? undefined;
+    const pin = resolveVersionPin(projectFilePath);
+    const decision = decideVersionPin(pin, serverProfile, {
+      saves: opts.saves,
+      allowUpgrade: opts.allowUpgrade,
+      projectFilePath,
+    });
+    if (decision.action === 'refuse') {
+      return {
+        error: { content: [{ type: 'text' as const, text: decision.message }], isError: true },
+        warning: '',
+      };
+    }
+    if (decision.action === 'proceed-with-warning') {
+      return { warning: decision.message + '\n' };
+    }
+    return { warning: '' };
+  } catch (e) {
+    // A broken guard must never block legitimate work; log and fall through.
+    serverLog.warn(
+      `version-pin check failed (proceeding): ${e instanceof Error ? e.message : String(e)}`
+    );
+    return { warning: '' };
   }
 }
 
@@ -2978,6 +3021,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     },
     async (args: { projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      const pinCheck = enforceVersionPin(escaped, {
+        saves: false,
+        profileName: config.profileName,
+      });
+      if (pinCheck.error) return pinCheck.error;
       const script = scriptManager.prepareScriptWithHelpers(
         'get_project_info',
         { PROJECT_FILE_PATH: escaped },
@@ -2989,7 +3037,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         return formatToolResponse(result, '');
       }
       const text = extractMarkerText(result.output, '### PROJECT_INFO_START ###', '### PROJECT_INFO_END ###');
-      return { content: [{ type: 'text' as const, text }], isError: false };
+      return { content: [{ type: 'text' as const, text: pinCheck.warning + text }], isError: false };
     }
   );
 
@@ -3949,6 +3997,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     },
     async (args: { projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      const pinCheck = enforceVersionPin(escaped, {
+        saves: false,
+        profileName: config.profileName,
+      });
+      if (pinCheck.error) return pinCheck.error;
       const script = scriptManager.prepareScriptWithHelpers(
         'list_project_libraries', { PROJECT_FILE_PATH: escaped }, ['ensure_project_open']
       );
@@ -4515,9 +4568,17 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     {
       projectFilePath: z.string().describe("Path to the project file."),
       level: z.enum(['major', 'minor', 'revision', 'build', 'auto']).describe("Which part of the 4-part version to bump. Major = incompatible API break. Minor = backward-compatible feature add. Revision = bug fix only. Build = internal / CI counter. AUTO classifies via git diff of mcp-mirror/ against the latest v* tag."),
+      allowVersionUpgrade: z.boolean().optional().describe("Override the CODESYS version-pin guard. The guard refuses to save when this server's install differs from the project's pinned version (.codesys-version, else library.md's 'CODESYS Development System' row), because saving converts the project. Only set true when the conversion is deliberate."),
     },
-    async (args: { projectFilePath: string; level: 'major' | 'minor' | 'revision' | 'build' | 'auto' }) => {
+    async (args: { projectFilePath: string; level: 'major' | 'minor' | 'revision' | 'build' | 'auto'; allowVersionUpgrade?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      // This tool saves the .project -- guard before anything else.
+      const pinCheck = enforceVersionPin(escaped, {
+        saves: true,
+        allowUpgrade: args.allowVersionUpgrade === true,
+        profileName: config.profileName,
+      });
+      if (pinCheck.error) return pinCheck.error;
 
       if (args.level === 'auto') {
         const projectDir = path.dirname(escaped);
@@ -4605,9 +4666,19 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     {
       projectFilePath: z.string().describe("Path to the project file."),
       push: z.boolean().optional().describe("Push to origin after commit/tag. Default true."),
+      allowVersionUpgrade: z.boolean().optional().describe("Override the CODESYS version-pin guard. The guard refuses to save when this server's install differs from the project's pinned version (.codesys-version, else library.md's 'CODESYS Development System' row), because saving converts the project and the committed binary stops matching what runs on the device. Only set true when the conversion is deliberate."),
     },
-    async (args: { projectFilePath: string; push?: boolean }) => {
+    async (args: { projectFilePath: string; push?: boolean; allowVersionUpgrade?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      // Guard FIRST: this pipeline saves the .project, and a save on a
+      // mismatched install converts it. A converted binary that has already
+      // been committed and tagged is expensive to unwind.
+      const pinCheck = enforceVersionPin(escaped, {
+        saves: true,
+        allowUpgrade: args.allowVersionUpgrade === true,
+        profileName: config.profileName,
+      });
+      if (pinCheck.error) return pinCheck.error;
       const projectDir = path.dirname(escaped);
       const doPush = args.push !== false;
       const log: string[] = [];
@@ -5058,6 +5129,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     },
     async (args: { projectFilePath: string; mirrorRoot?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      const pinCheck = enforceVersionPin(escaped, {
+        saves: false,
+        profileName: config.profileName,
+      });
+      if (pinCheck.error) return pinCheck.error;
       const mirrorRoot = args.mirrorRoot
         ? resolvePath(args.mirrorRoot, workspaceDir)
         : resolveMirrorRoot(escaped);
@@ -5072,7 +5148,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const result = await executor.executeScript(script);
       return formatToolResponse(
         result,
-        `mirror_export complete for ${args.projectFilePath} -> ${mirrorRoot}.`
+        `${pinCheck.warning}mirror_export complete for ${args.projectFilePath} -> ${mirrorRoot}.`
       );
     }
   );

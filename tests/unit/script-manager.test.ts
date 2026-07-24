@@ -87,7 +87,11 @@ describe('ScriptManager', () => {
   it('EVERY script template is ASCII-only (IronPython 2.7, no coding declaration)', () => {
     const fs = require('fs');
     const dir = path.join(__dirname, '..', '..', 'src', 'scripts');
-    for (const f of fs.readdirSync(dir) as string[]) {
+    // withFileTypes so a stray directory (e.g. an untracked __pycache__/ left
+    // behind by a local Python run) doesn't blow up readFileSync with EISDIR.
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true }) as { name: string; isFile(): boolean }[]) {
+      if (!ent.isFile() || !ent.name.endsWith('.py')) continue;
+      const f = ent.name;
       const body = fs.readFileSync(path.join(dir, f), 'latin1');
       // eslint-disable-next-line no-control-regex
       expect(/^[\x00-\x7F]*$/.test(body), `${f} must be ASCII-only`).toBe(true);

@@ -305,6 +305,45 @@ If you have a specific `.project` file in mind and don't want to eyeball which i
 codesys-mcp-sp21-plus --print-config --for-project "C:\path\to\MyMachine.project"
 ```
 
+> **Caveat:** `--for-project` reads `projectinspectiondata.auxiliary` out of the project ZIP.
+> That entry exists in `.projectarchive` files, but a plain **`.project` is not a ZIP** — it is a
+> compressed CODESYS container (magic `23 89 ED 33`) with no readable profile string. On a plain
+> `.project`, `--for-project` finds nothing and falls back to the default install. Use the version
+> pin below to protect real projects.
+
+## Version pin: never silently convert a project
+
+Opening a project in a CODESYS **newer** than the one that authored it converts it on save. The
+`.project` on disk is then no longer the software running on the device — and if that save happened
+inside `release_project_version`, the wrong binary is already committed, tagged and pushed.
+
+Because the authored version can't be read out of a `.project` (see the caveat above), it is pinned
+in the repo instead. Two sources, most specific first:
+
+1. **`.codesys-version`** next to the `.project` — one line, either `3.5.19.20` or
+   `CODESYS V3.5 SP19`. `#` comments and blank lines are skipped. This is the only option when
+   seeding a project that has no release history yet.
+2. **`library.md`** — the `CODESYS Development System` row of a previously generated inventory.
+   Every project gets a pin for free after its first release.
+
+```bash
+echo 3.5.19.20 > "C:\plc\MyVessel\.codesys-version"
+```
+
+The guard is deliberately asymmetric, so it protects the dangerous path without getting in the way:
+
+| Tool | Pin matches | Pin differs | No pin |
+|---|---|---|---|
+| `bump_project_version`, `release_project_version` (**save** the project) | proceed | **refuse** | **refuse** |
+| `get_project_info`, `mirror_export`, `list_project_libraries` (read only) | proceed | warn | proceed |
+
+Both saving tools take `allowVersionUpgrade: true` to override when the conversion is deliberate.
+Read-only tools never refuse — a warning is enough to stop a human before they run the release, and
+refusing every read would break existing unpinned repos.
+
+Note this is a *different* mechanism from the `open_project` pre-flight in `src/preflight.ts`, which
+compares the ZIP-derived profile and therefore no-ops on plain `.project` files.
+
 ## CLI Reference
 
 | Flag | Description | Default |
