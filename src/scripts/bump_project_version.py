@@ -1,4 +1,4 @@
-import sys, scriptengine as script_engine, traceback, re
+import sys, os, scriptengine as script_engine, traceback, re
 
 # Bumps one part of the 4-part Project Information.version field of the
 # primary project. Convention (per CODESYS / 3S / WAGO library practice):
@@ -106,7 +106,26 @@ def _ascii_clean(s):
     return ''.join(c for c in s if 32 <= ord(c) < 127 and c != "'")
 
 
-RESERVED_GVL_NAMES = ('sVersion', 'uiLibraryCount')
+RESERVED_GVL_NAMES = ('sVersion', 'sDriveFile', 'uiLibraryCount')
+
+
+def next_drive_file_name(existing_decl, project_file_path):
+    """Compute the Drive export name this build will be copied to (KK convention
+    2026-07-24: '<project stem>_NNN', e.g. MRCodesysSeaLeopard_BZM_00_006).
+    If the existing GVL declaration already carries sDriveFile, increment its
+    trailing integer (zero-padding preserved) so manual seeding survives.
+    Otherwise seed '<stem>_001' from the project filename. Versions never sent
+    to Drive leave gaps in the sequence; the value inside the binary is the
+    authoritative name for THAT build."""
+    m = re.search(r"sDriveFile\s*:\s*STRING\s*:=\s*'([^']*)'", existing_decl or '')
+    if m and m.group(1):
+        prev = m.group(1)
+        m2 = re.search(r'^(.*_)(\d+)$', prev)
+        if m2:
+            return m2.group(1) + str(int(m2.group(2)) + 1).zfill(len(m2.group(2)))
+        return prev + '_001'
+    stem = os.path.splitext(os.path.basename(project_file_path))[0]
+    return _ascii_clean(stem) + '_001'
 
 
 def _sanitize_ident(name):
@@ -173,7 +192,7 @@ def enumerate_libraries(primary_project):
     return sorted(by_name.items())
 
 
-def build_version_gvl_declaration(version_str, libraries):
+def build_version_gvl_declaration(version_str, libraries, drive_file=''):
     """Build the _MCP_PROJECT_VERSION GVL: the sVersion anchor plus the library
     manifest as one scalar STRING per reference, where the VARIABLE NAME is the
     library namespace and the value is its resolved version (same self-describing
@@ -183,6 +202,10 @@ def build_version_gvl_declaration(version_str, libraries):
         "{attribute 'qualified_only'}",
         "VAR_GLOBAL",
         "    sVersion : STRING := '%s';" % version_str,
+        "    // Drive export name for THIS build (maintained by bump_project_version;",
+        "    // incremented on every version bump -- gaps mean a version was never",
+        "    // uploaded). The running PLC reports which Drive file it came from.",
+        "    sDriveFile : STRING := '%s';" % drive_file,
         "    // Library manifest -- one STRING per library: the variable NAME is the",
         "    // library namespace, the value its resolved version. Maintained by",
         "    // bump_project_version.",
@@ -276,12 +299,8 @@ def maintain_version_gvl(primary_project, version_str):
         print("WARNING: no active Application found -- cannot maintain %s GVL" % VERSION_GVL_NAME)
         return False
 
-    libraries = enumerate_libraries(primary_project)
-    decl = build_version_gvl_declaration(version_str, libraries)
-    print("DEBUG: library manifest: %d reference(s) enumerated for %s" % (
-        len(libraries), VERSION_GVL_NAME))
-
-    # Try to find existing GVL with this name
+    # Try to find existing GVL with this name (also the source of the previous
+    # sDriveFile value, which the new declaration increments)
     existing = None
     try:
         for child in app.get_children(False):
@@ -293,6 +312,19 @@ def maintain_version_gvl(primary_project, version_str):
                 pass
     except Exception as e:
         print("WARNING: walking Application children failed: %s" % e)
+
+    existing_decl = ''
+    if existing is not None:
+        try:
+            existing_decl = existing.textual_declaration.text or ''
+        except Exception:
+            pass
+    drive_file = next_drive_file_name(existing_decl, PROJECT_FILE_PATH)
+    libraries = enumerate_libraries(primary_project)
+    decl = build_version_gvl_declaration(version_str, libraries, drive_file)
+    print("DEBUG: library manifest: %d reference(s) enumerated for %s" % (
+        len(libraries), VERSION_GVL_NAME))
+    print("DEBUG: sDriveFile -> '%s'" % drive_file)
 
     if existing is not None:
         try:
