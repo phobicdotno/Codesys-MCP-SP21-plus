@@ -90,12 +90,33 @@ try:
 
     print("DEBUG: Calling parent_object.create_pou: Name='%s', Type=%s, Lang=%s" % (POU_NAME, pou_type_enum, lang_guid))
 
-    # Call create_pou using keyword arguments
-    new_pou = parent_object.create_pou(
-        name=POU_NAME,
-        type=pou_type_enum,
-        language=lang_guid # Pass None
-    )
+    # Call create_pou using keyword arguments. FUNCTIONs require return_type
+    # (ScriptIecLanguageObjectContainer.create_pou raises 'out of the range of
+    # valid values / Parameter name: return_type' without it). Pull it from the
+    # declaration ('FUNCTION Name : TYPE'), fall back to BOOL; the declaration
+    # replace below overwrites the full header anyway.
+    if POU_TYPE_STR == 'Function':
+        ret_type = 'BOOL'
+        try:
+            import re as _re
+            m = _re.search(r'FUNCTION\s+\w+\s*:\s*([\w.()]+)', DECLARATION_CODE or '')
+            if m:
+                ret_type = m.group(1)
+        except Exception:
+            pass
+        print("DEBUG: Function return_type = %s" % ret_type)
+        new_pou = parent_object.create_pou(
+            name=POU_NAME,
+            type=pou_type_enum,
+            language=lang_guid,
+            return_type=ret_type
+        )
+    else:
+        new_pou = parent_object.create_pou(
+            name=POU_NAME,
+            type=pou_type_enum,
+            language=lang_guid # Pass None
+        )
 
     print("DEBUG: parent_object.create_pou returned: %s" % new_pou)
     if new_pou:
