@@ -110,20 +110,16 @@ RESERVED_GVL_NAMES = ('sVersion', 'sDriveFile', 'uiLibraryCount')
 
 
 def next_drive_file_name(existing_decl, project_file_path):
-    """Compute the Drive export name this build will be copied to (KK convention
-    2026-07-24: '<project stem>_NNN', e.g. MRCodesysSeaLeopard_BZM_00_006).
-    If the existing GVL declaration already carries sDriveFile, increment its
-    trailing integer (zero-padding preserved) so manual seeding survives.
-    Otherwise seed '<stem>_001' from the project filename. Versions never sent
-    to Drive leave gaps in the sequence; the value inside the binary is the
-    authoritative name for THAT build."""
+    """Carry the Drive export name ('<project stem>_NNN', e.g.
+    MRCodesysSeaLeopard_BZM_00_006) through version bumps UNCHANGED.
+    KK convention update 2026-07-24: the number advances only when a build is
+    actually uploaded to Drive (set manually in the GVL at upload time), NOT on
+    every bump -- auto-increment per bump burned through numbers for builds that
+    never left the machine. Seed '<stem>_001' from the project filename only
+    when the variable is absent."""
     m = re.search(r"sDriveFile\s*:\s*STRING\s*:=\s*'([^']*)'", existing_decl or '')
     if m and m.group(1):
-        prev = m.group(1)
-        m2 = re.search(r'^(.*_)(\d+)$', prev)
-        if m2:
-            return m2.group(1) + str(int(m2.group(2)) + 1).zfill(len(m2.group(2)))
-        return prev + '_001'
+        return m.group(1)
     stem = os.path.splitext(os.path.basename(project_file_path))[0]
     return _ascii_clean(stem) + '_001'
 
