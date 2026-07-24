@@ -311,6 +311,47 @@ codesys-mcp-sp21-plus --print-config --for-project "C:\path\to\MyMachine.project
 > `.project`, `--for-project` finds nothing and falls back to the default install. Use the version
 > pin below to protect real projects.
 
+## `--codesys-additional-folder`: where the add-on packages actually live
+
+If launching produces *"The command line option 'runscript' has been set. However, there is no
+script engine implementation available"*, or a load dialog that appears to contradict itself —
+
+> The project file has been created with CODESYS V3.5 SP19 Patch 2 and contains data that cannot
+> be loaded by CODESYS V3.5 SP19 Patch 2.
+
+— the install has **multiple profiles sharing one name**.
+
+The CODESYS Installer registers add-on packages (Script Engine, device support, …) into a
+per-installation directory:
+
+```
+<install>\CODESYS\AdditionalFolders\<InstallationName>\Profiles\<ProfileName>.profile.xml
+```
+
+Every one of those carries the *same* `<ProfileName>` as the bare base profile in
+`<install>\CODESYS\Profiles\`, but a different set of registered plugins. So `--profile` alone is
+ambiguous: CODESYS resolves it to the base profile, which on an installer-managed box can have
+**zero** plugins. That's both symptoms above — no Script Engine, and "missing packages" phrased in
+terms of a profile name that matches.
+
+The shortcut the installer drops in the Start Menu passes the disambiguator; so must this server:
+
+```jsonc
+"--codesys-profile", "CODESYS V3.5 SP19 Patch 2",
+"--codesys-additional-folder", "C:\\Program Files\\CODESYS 3.5.19.20\\CODESYS\\AdditionalFolders\\MyInstallation",
+```
+
+`--detect` / `--print-config` find this for you: they rank every `AdditionalFolders\*` by how many
+plugins its profile ranks and emit the fullest one. Installs with no `AdditionalFolders` (the stock
+case — everything is in the base profile) get no flag, which is correct.
+
+To check by hand, compare plugin counts across the same-named profiles:
+
+```powershell
+Get-ChildItem "C:\Program Files\CODESYS 3.5.19.20\CODESYS" -Recurse -Filter "*.profile.xml" |
+  ForEach-Object { "{0,-4} {1}" -f (Select-String $_ -Pattern '<Hint>' -AllMatches).Matches.Count, $_.FullName }
+```
+
 ## Version pin: never silently convert a project
 
 Opening a project in a CODESYS **newer** than the one that authored it converts it on save. The

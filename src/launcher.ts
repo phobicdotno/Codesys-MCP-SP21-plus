@@ -244,8 +244,14 @@ export class CodesysLauncher implements ScriptExecutor {
     // Build CODESYS command
     const quotedExe = `"${this.config.codesysPath}"`;
     const profileArg = `--profile="${this.config.profileName}"`;
+    // Add-on packages (Script Engine included) live in a per-installation
+    // AdditionalFolders subdir with its own profile.xml under the SAME profile
+    // name. Omit this and CODESYS boots the bare base profile with zero plugins.
+    const folderArg = this.config.additionalFolder
+      ? ` --additionalfolder="${this.config.additionalFolder}"`
+      : '';
     const scriptArg = `--runscript="${watcherPath}"`;
-    const fullCommand = `${quotedExe} ${profileArg} ${scriptArg}`;
+    const fullCommand = `${quotedExe} ${profileArg}${folderArg} ${scriptArg}`;
 
     launcherLog.info(`Spawning: ${fullCommand}`);
 

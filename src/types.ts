@@ -29,6 +29,15 @@ export interface LauncherConfig {
   codesysPath: string;
   profileName: string;
   workspaceDir: string;
+  /**
+   * Optional --additionalfolder= value. The CODESYS Installer registers add-on
+   * packages (Script Engine included) into a per-installation folder under
+   * <install>\CODESYS\AdditionalFolders\<InstallationName>, each carrying its
+   * own profile.xml with the SAME profile name as the bare base install. Launch
+   * without this and CODESYS boots the base profile -- no plugins, no scripting.
+   * The Start Menu shortcut the installer generates passes it; so must we.
+   */
+  additionalFolder?: string;
 }
 
 /** Runtime status of the CODESYS launcher */

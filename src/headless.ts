@@ -52,8 +52,11 @@ export class HeadlessExecutor implements ScriptExecutor {
       // Build command
       const quotedExe = `"${this.config.codesysPath}"`;
       const profileArg = `--profile="${this.config.profileName}"`;
+      const folderArg = this.config.additionalFolder
+        ? ` --additionalfolder="${this.config.additionalFolder}"`
+        : '';
       const scriptArg = `--runscript="${tempFilePath}"`;
-      const fullCommand = `${quotedExe} ${profileArg} --noUI ${scriptArg}`;
+      const fullCommand = `${quotedExe} ${profileArg}${folderArg} --noUI ${scriptArg}`;
 
       headlessLog.debug(`Spawning: ${fullCommand}`);
 

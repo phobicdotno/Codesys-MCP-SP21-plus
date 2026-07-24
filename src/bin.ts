@@ -50,6 +50,11 @@ program
     process.env.CODESYS_PROFILE || 'CODESYS V3.5 SP21'
   )
   .option(
+    '--codesys-additional-folder <dir>',
+    'Path to the installation folder under <install>\\CODESYS\\AdditionalFolders\\ that holds the add-on packages (Script Engine, device support, ...). Passed through as --additionalfolder=. Without it CODESYS boots the bare base profile, which has no plugins registered -- scripting fails with "no script engine implementation available". Copy the value from the Start Menu shortcut the CODESYS Installer generated.',
+    process.env.CODESYS_ADDITIONAL_FOLDER
+  )
+  .option(
     '-w, --workspace <dir>',
     'Workspace directory for relative project paths',
     process.cwd()
@@ -207,6 +212,7 @@ if (opts.sshVersion) {
   const config: ServerConfig = {
     codesysPath: opts.codesysPath.trim(),
     profileName: opts.codesysProfile.trim(),
+    additionalFolder: opts.codesysAdditionalFolder?.trim() || undefined,
     workspaceDir: opts.workspace.trim(),
     autoLaunch: opts.autoLaunch !== false,
     keepAlive: opts.keepAlive || false,
@@ -224,6 +230,9 @@ if (opts.sshVersion) {
   process.stderr.write(`Starting CODESYS MCP Server v${version}\n`);
   process.stderr.write(`  CODESYS Path: ${config.codesysPath}\n`);
   process.stderr.write(`  Profile: ${config.profileName}\n`);
+  if (config.additionalFolder) {
+    process.stderr.write(`  Additional folder: ${config.additionalFolder}\n`);
+  }
   process.stderr.write(`  Mode: ${config.mode}\n`);
   process.stderr.write(`  Auto-launch: ${config.autoLaunch}\n`);
   if (config.autoMirror) {

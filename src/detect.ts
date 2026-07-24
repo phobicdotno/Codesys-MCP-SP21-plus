@@ -11,9 +11,72 @@ export interface CodesysInstall {
   patch: number;
   profileName: string;
   serverName: string;
+  /**
+   * The AdditionalFolders installation carrying the most registered plugins,
+   * if any. See LauncherConfig.additionalFolder -- without passing this the
+   * IDE boots the bare base profile and scripting is unavailable.
+   */
+  additionalFolder?: string;
 }
 
 const VERSION_RE = /^CODESYS\s+(\d+)\.(\d+)\.(\d+)\.(\d+)$/i;
+
+/**
+ * Pick the richest AdditionalFolders installation for an install dir.
+ *
+ * The CODESYS Installer writes one folder per "Installation", each with its
+ * own Profiles\<name>.profile.xml listing that installation's plugins. Every
+ * one of them reuses the base profile NAME, so the name alone can't tell them
+ * apart -- we rank by how many plugins each registers and take the fullest.
+ * Returns undefined when there are no AdditionalFolders (the common case for
+ * a stock install, where the base profile already has everything).
+ */
+function findRichestAdditionalFolder(
+  installDir: string,
+  fsApi: {
+    readdirSync: typeof fs.readdirSync;
+    readFileSync?: typeof fs.readFileSync;
+  }
+): string | undefined {
+  const readFileSync = fsApi.readFileSync;
+  if (!readFileSync) return undefined;
+
+  const root = path.join(installDir, 'CODESYS', 'AdditionalFolders');
+  let entries: string[];
+  try {
+    entries = fsApi.readdirSync(root);
+  } catch {
+    return undefined;
+  }
+
+  let best: { dir: string; plugins: number } | undefined;
+  for (const entry of entries) {
+    const dir = path.join(root, entry);
+    const profilesDir = path.join(dir, 'Profiles');
+    let profiles: string[];
+    try {
+      profiles = fsApi.readdirSync(profilesDir).filter((f) => f.toLowerCase().endsWith('.profile.xml'));
+    } catch {
+      continue;
+    }
+
+    let plugins = 0;
+    for (const profile of profiles) {
+      try {
+        const xml = readFileSync(path.join(profilesDir, profile), 'utf-8');
+        plugins += (xml.match(/<Hint>/g) ?? []).length;
+      } catch {
+        /* unreadable profile -- treat as contributing nothing */
+      }
+    }
+
+    if (plugins > 0 && (!best || plugins > best.plugins)) {
+      best = { dir, plugins };
+    }
+  }
+
+  return best?.dir;
+}
 
 /**
  * Parse a CODESYS profile name like "CODESYS V3.5 SP22 Patch 1" or
@@ -48,7 +111,13 @@ function deriveServerName(sp: number, patch: number): string {
 
 export function detectInstalls(
   searchDirs: string[] = ['C:\\Program Files', 'C:\\Program Files (x86)'],
-  fsApi: { readdirSync: typeof fs.readdirSync; existsSync: typeof fs.existsSync } = fs
+  fsApi: {
+    readdirSync: typeof fs.readdirSync;
+    existsSync: typeof fs.existsSync;
+    // Optional so existing injected fakes keep compiling -- without it we just
+    // can't rank AdditionalFolders and leave additionalFolder undefined.
+    readFileSync?: typeof fs.readFileSync;
+  } = fs
 ): CodesysInstall[] {
   const installs: CodesysInstall[] = [];
   const seen = new Set<string>();
@@ -84,6 +153,7 @@ export function detectInstalls(
         patch,
         profileName: deriveProfileName(major, minor, sp, patch),
         serverName: deriveServerName(sp, patch),
+        additionalFolder: findRichestAdditionalFolder(path.join(base, entry), fsApi),
       });
     }
   }
@@ -202,6 +272,9 @@ export function printConfig(installs: CodesysInstall[], opts: PrintConfigOptions
     lines.push(`      "args": [`);
     lines.push(`        "--codesys-path", ${JSON.stringify(install.exePath)},`);
     lines.push(`        "--codesys-profile", ${JSON.stringify(install.profileName)},`);
+    if (install.additionalFolder) {
+      lines.push(`        "--codesys-additional-folder", ${JSON.stringify(install.additionalFolder)},`);
+    }
     lines.push(`        "--mode", "persistent"`);
     lines.push(`      ]`);
     lines.push(`    }${isLast ? '' : ','}`);
