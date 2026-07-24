@@ -76,10 +76,17 @@ try:
     removed = False
     errors = []
 
-    # del by index FIRST: ScriptPouObjectCollection.remove(name) can return
-    # without effect (no exception, entry persists -- observed SP21 Sea Leopard
-    # 2026-07-24 after a program rename left a stale call). Index deletion is
-    # deterministic; verify afterwards instead of trusting the call.
+    # remove(int index) FIRST: on SP21 both remove(name) and del pous[i] can
+    # return without effect (no exception, entry persists -- observed Sea
+    # Leopard 2026-07-24 after a program rename left a stale call). The int
+    # overload of remove(index_or_name) is the variant that actually mutates.
+    # Verification after save decides; nothing here is trusted.
+    if not removed:
+        try:
+            pous.remove(before.index(POU_NAME)); removed = True
+        except Exception as e:
+            errors.append("remove(int): %s" % e)
+
     if not removed:
         try:
             del pous[before.index(POU_NAME)]; removed = True

@@ -243,6 +243,24 @@ export function buildChangelogUpdate(
  * inspect the returned result; callers that don't (bump_project_version)
  * may ignore it, same as before.
  */
+/**
+ * Resolve the changelog's ACTUAL on-disk filename (Changelog.md vs CHANGELOG.md).
+ * Windows' case-insensitive filesystem makes fs writes land in either, but
+ * `git add "Changelog.md"` does NOT reliably update an index entry tracked as
+ * CHANGELOG.md -- the release pipeline then commits a STALE changelog and
+ * Lib001's pre-commit version-match hook rejects the commit (observed
+ * 2026-07-24, Lib001 v0.22.0.0).
+ */
+export function resolveChangelogName(projectDir: string): string {
+  try {
+    const hit = fs.readdirSync(projectDir).find((f) => f.toLowerCase() === 'changelog.md');
+    if (hit) return hit;
+  } catch {
+    /* fall through */
+  }
+  return 'Changelog.md';
+}
+
 export function appendChangelogEntry(
   projectDir: string,
   fromVersion: string | null,
@@ -250,7 +268,7 @@ export function appendChangelogEntry(
   levelLabel: string,
   evidence: string[]
 ): ChangelogUpdateResult {
-  const changelogPath = path.join(projectDir, 'Changelog.md');
+  const changelogPath = path.join(projectDir, resolveChangelogName(projectDir));
   let existing: string | null = null;
   try {
     existing = fs.readFileSync(changelogPath, 'utf-8');
@@ -4869,7 +4887,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       // 8. Git add / commit / tag / push
       try {
         const projName = path.basename(escaped);
-        const candidatePaths = [mirrorDirName, 'library.md', 'pou-dump.md', 'README.md', 'Changelog.md', '.gitignore', projName];
+        const candidatePaths = [mirrorDirName, 'library.md', 'pou-dump.md', 'README.md', resolveChangelogName(projectDir), '.gitignore', projName];
         const addPaths = candidatePaths.filter((p) => fs.existsSync(path.join(projectDir, p)));
         const addArgs = addPaths.map((p) => `"${p}"`).join(' ');
         execSync(`git -C "${projectDir}" add ${addArgs}`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
