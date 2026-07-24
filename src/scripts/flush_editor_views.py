@@ -31,6 +31,19 @@ try:
         primary_project.save()
         print("DEBUG: flush_editor_views: unsaved changes saved before close.")
 
+    # Close is REFUSED while logged into a device, which silently defeated the
+    # flush for whole online sessions (views piled up until the IDE died with
+    # "running low on system resources" -- observed Sea Leopard 2026-07-24).
+    # Log off first; the next online tool re-logs-in via ensure_online_connection
+    # (credentials are pre-registered, so no dialog).
+    try:
+        for app in (script_engine.online.create_online_application(),):
+            if app is not None and getattr(app, 'is_logged_in', False):
+                app.logout()
+                print("DEBUG: flush_editor_views: logged out of the device so the project can close.")
+    except Exception as lo_err:
+        print("DEBUG: flush_editor_views: logout skipped/failed (continuing): %s" % lo_err)
+
     primary_project.close()
     print("DEBUG: flush_editor_views: project closed to dispose editor views: %s" % project_path)
 
