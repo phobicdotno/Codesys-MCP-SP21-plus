@@ -45,6 +45,14 @@ try:
                 count += 1
         except Exception as e:
             print("DEBUG: parameter walk failed for %s: %s" % (scope, e))
+        # ScriptConnector exposes the host-side parameter set (e.g. the WAGO
+        # "K-BUS Parameters" grid) only via host_parameters, not parameters.
+        try:
+            for param in (getattr(conn, 'host_parameters', None) or []):
+                print(_param_row(scope + ':host', param))
+                count += 1
+        except Exception as e:
+            print("DEBUG: host_parameter walk failed for %s: %s" % (scope, e))
     print("### PARAMS_END ###")
 
     print("Device: %s" % dev_name)

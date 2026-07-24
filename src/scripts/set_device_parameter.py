@@ -40,6 +40,13 @@ def _iter_params(device):
                 yield scope, param
         except Exception as e:
             print("DEBUG: parameter walk failed for %s: %s" % (scope, e))
+        # ScriptConnector exposes the host-side parameter set (e.g. the WAGO
+        # "K-BUS Parameters" grid) only via host_parameters, not parameters.
+        try:
+            for param in (getattr(conn, 'host_parameters', None) or []):
+                yield scope + ':host', param
+        except Exception as e:
+            print("DEBUG: host_parameter walk failed for %s: %s" % (scope, e))
 
 try:
     print("DEBUG: set_device_parameter script: Device='%s', Name='%s', Id='%s', GetOnly=%s, Project='%s'" % (
