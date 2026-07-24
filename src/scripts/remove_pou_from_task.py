@@ -76,6 +76,16 @@ try:
     removed = False
     errors = []
 
+    # del by index FIRST: ScriptPouObjectCollection.remove(name) can return
+    # without effect (no exception, entry persists -- observed SP21 Sea Leopard
+    # 2026-07-24 after a program rename left a stale call). Index deletion is
+    # deterministic; verify afterwards instead of trusting the call.
+    if not removed:
+        try:
+            del pous[before.index(POU_NAME)]; removed = True
+        except Exception as e:
+            errors.append("del[i]: %s" % e)
+
     if not removed:
         try:
             pous.remove(POU_NAME); removed = True
@@ -107,6 +117,10 @@ try:
             after.append(str(p))
     except Exception:
         pass
+
+    if POU_NAME in after:
+        raise RuntimeError("Removal reported success but '%s' is STILL in task '%s' call list: %s" % (
+            POU_NAME, TASK_NAME, ", ".join(after)))
 
     print("POU '%s' removed from task '%s'." % (POU_NAME, TASK_NAME))
     print("Task '%s' now calls: %s" % (TASK_NAME, ", ".join(after) if after else "(none)"))
