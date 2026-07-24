@@ -578,6 +578,90 @@ function renderLibraryMd(libs: LibrariesData, runtimeAnchorVersion?: string): st
   return L.join('\n');
 }
 
+/**
+ * Regenerate one of the two script-derived text artefacts.
+ *
+ * Shared by release_project_version's normal path and its no-change repair
+ * path, so a repaired file is byte-identical to a freshly released one.
+ * Appends a one-line outcome to `log` either way -- a skip is reported, never
+ * silently swallowed.
+ */
+async function regenerateArtifact(
+  artifact: 'library.md' | 'pou-dump.md',
+  ctx: {
+    projectDir: string;
+    escaped: string;
+    /** Version to stamp into library.md. Undefined leaves it to the renderer. */
+    version?: string;
+    scriptManager: ScriptManager;
+    executor: ScriptExecutor;
+    log: string[];
+  }
+): Promise<void> {
+  const { projectDir, escaped, version, scriptManager, executor, log } = ctx;
+  const spec =
+    artifact === 'library.md'
+      ? { script: 'list_project_libraries', start: '### LIBRARIES_START ###', end: '### LIBRARIES_END ###' }
+      : { script: 'get_all_pou_code', start: '### ALL_POU_CODE_START ###', end: '### ALL_POU_CODE_END ###' };
+
+  try {
+    const prepared = scriptManager.prepareScriptWithHelpers(
+      spec.script, { PROJECT_FILE_PATH: escaped }, ['ensure_project_open']
+    );
+    const res = await executor.executeScript(prepared);
+    const sIdx = res.output.indexOf(spec.start);
+    const eIdx = res.output.indexOf(spec.end);
+    if (sIdx < 0 || eIdx <= sIdx) {
+      log.push(`${artifact}: skipped (markers not found in output)`);
+      return;
+    }
+    const payload = res.output.substring(sIdx + spec.start.length, eIdx).trim();
+
+    if (artifact === 'library.md') {
+      const libs: LibrariesData = JSON.parse(payload);
+      fs.writeFileSync(path.join(projectDir, 'library.md'), renderLibraryMd(libs, version), 'utf-8');
+      log.push(`library.md: ${libs.total_references} refs`);
+    } else {
+      const pou: PouEntry[] = JSON.parse(payload);
+      const projName = path.basename(escaped, '.project');
+      fs.writeFileSync(path.join(projectDir, 'pou-dump.md'), renderPouDumpMd(pou, projName), 'utf-8');
+      log.push(`pou-dump.md: ${pou.length} POUs`);
+    }
+  } catch (e) {
+    log.push(`${artifact}: skipped (${e instanceof Error ? e.message : String(e)})`);
+  }
+}
+
+/**
+ * Pull the current version out of library.md's "Project Information.Version"
+ * row, so a repair can stamp the version that is already released rather than
+ * inventing a new one. Returns null when the file or row is absent.
+ */
+function readProjectVersionFromLibraryMd(projectDir: string): string | null {
+  try {
+    const md = fs.readFileSync(path.join(projectDir, 'library.md'), 'utf-8');
+    const m = /Project Information\.Version\s*\|\s*`([^`]+)`/.exec(md);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Commit regenerated artefacts. No tag -- the version did not move. */
+function gitCommitArtifactRepair(projectDir: string, repairLog: string[]): void {
+  execSync(`git -C "${projectDir}" add "library.md" "pou-dump.md"`, {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const msg =
+    'Regenerate text artefact(s) missed by an earlier release\n\n' +
+    repairLog.map((l) => `  - ${l}`).join('\n') + '\n';
+  execSync(`git -C "${projectDir}" commit -m ${JSON.stringify(msg)}`, {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
 function renderPouDumpMd(pou: PouEntry[], projectName: string): string {
   pou.sort((a, b) => a.path.localeCompare(b.path));
   const slugs: string[] = [];
@@ -4762,10 +4846,50 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         classification = { kind: 'bump', level: 'build', evidence };
       }
       if (classification.kind === 'no-changes') {
+        // Nothing to bump -- but an earlier release may have logged
+        // "library.md/pou-dump.md: skipped" and still committed+tagged. That
+        // leaves the repo permanently short an artefact: the next release
+        // short-circuits here too, so the gap can never close on its own.
+        // Regenerate whatever is missing (at the CURRENT version, since the
+        // version isn't moving) and commit it as a repair.
+        const repairLog: string[] = [];
+        const currentVersion = readProjectVersionFromLibraryMd(projectDir) ?? undefined;
+        for (const artifact of ['library.md', 'pou-dump.md'] as const) {
+          if (fs.existsSync(path.join(projectDir, artifact))) continue;
+          try {
+            await regenerateArtifact(artifact, {
+              projectDir,
+              escaped,
+              version: currentVersion,
+              scriptManager,
+              executor,
+              log: repairLog,
+            });
+          } catch (e) {
+            repairLog.push(`${artifact}: repair failed (${e instanceof Error ? e.message : String(e)})`);
+          }
+        }
+
+        if (repairLog.length > 0) {
+          try {
+            gitCommitArtifactRepair(projectDir, repairLog);
+            repairLog.push('git: committed the regenerated artefact(s) (no new tag -- the version did not move)');
+            if (args.push !== false) {
+              execSync(`git -C "${projectDir}" push`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+              repairLog.push('git: pushed');
+            }
+          } catch (e) {
+            repairLog.push(`git: repair commit failed (${e instanceof Error ? e.message : String(e)})`);
+          }
+        }
+
         return {
           content: [{ type: 'text' as const, text:
             `release_project_version: no version change -- ${mirrorDirName}/ matches latest v* tag and project-sha256 is unchanged.\n\n` +
-            classification.evidence.map((e) => `  - ${e}`).join('\n')
+            classification.evidence.map((e) => `  - ${e}`).join('\n') +
+            (repairLog.length > 0
+              ? `\n\nRepaired missing text artefact(s):\n` + repairLog.map((e) => `  - ${e}`).join('\n')
+              : '')
           }],
           isError: false,
         };
@@ -4894,48 +5018,10 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         log.push(`Changelog.md: NOT appended -- ${changelogUpdate.reason}`);
       }
 
-      // 5. Refresh library.md
-      try {
-        const libsScript = scriptManager.prepareScriptWithHelpers(
-          'list_project_libraries', { PROJECT_FILE_PATH: escaped }, ['ensure_project_open']
-        );
-        const libsRes = await executor.executeScript(libsScript);
-        const startMarker = '### LIBRARIES_START ###';
-        const endMarker = '### LIBRARIES_END ###';
-        const sIdx = libsRes.output.indexOf(startMarker);
-        const eIdx = libsRes.output.indexOf(endMarker);
-        if (sIdx >= 0 && eIdx > sIdx) {
-          const libs: LibrariesData = JSON.parse(libsRes.output.substring(sIdx + startMarker.length, eIdx).trim());
-          fs.writeFileSync(path.join(projectDir, 'library.md'), renderLibraryMd(libs, newVersion), 'utf-8');
-          log.push(`library.md: ${libs.total_references} refs`);
-        } else {
-          log.push('library.md: skipped (markers not found in output)');
-        }
-      } catch (e) {
-        log.push(`library.md: skipped (${e instanceof Error ? e.message : String(e)})`);
-      }
-
-      // 6. Refresh pou-dump.md
-      try {
-        const pouScript = scriptManager.prepareScriptWithHelpers(
-          'get_all_pou_code', { PROJECT_FILE_PATH: escaped }, ['ensure_project_open']
-        );
-        const pouRes = await executor.executeScript(pouScript);
-        const startMarker = '### ALL_POU_CODE_START ###';
-        const endMarker = '### ALL_POU_CODE_END ###';
-        const sIdx = pouRes.output.indexOf(startMarker);
-        const eIdx = pouRes.output.indexOf(endMarker);
-        if (sIdx >= 0 && eIdx > sIdx) {
-          const pou: PouEntry[] = JSON.parse(pouRes.output.substring(sIdx + startMarker.length, eIdx).trim());
-          const projName = path.basename(escaped, '.project');
-          fs.writeFileSync(path.join(projectDir, 'pou-dump.md'), renderPouDumpMd(pou, projName), 'utf-8');
-          log.push(`pou-dump.md: ${pou.length} POUs`);
-        } else {
-          log.push('pou-dump.md: skipped (markers not found in output)');
-        }
-      } catch (e) {
-        log.push(`pou-dump.md: skipped (${e instanceof Error ? e.message : String(e)})`);
-      }
+      // 5-6. Refresh library.md + pou-dump.md
+      const artifactCtx = { projectDir, escaped, version: newVersion, scriptManager, executor, log };
+      await regenerateArtifact('library.md', artifactCtx);
+      await regenerateArtifact('pou-dump.md', artifactCtx);
 
       // 7. Update README.md version header (anchored -- see updateReadmeVersion
       // for why this is no longer a blanket vX.Y.Z.W sweep over the whole file)
