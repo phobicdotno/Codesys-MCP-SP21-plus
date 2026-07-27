@@ -91,7 +91,14 @@ export function pathsEqual(a: string, b: string): boolean {
     s.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '').trim();
   return norm(a) === norm(b);
 }
-const READY_TIMEOUT_MS = 60_000;
+// A bare CODESYS install signals ready in ~15-25s. An install launched with
+// --additionalfolder that registers a large add-on set (e.g. SP19 P2 with the
+// 161-plugin MarinerX07 folder incl. the Script Engine) takes ~70s to boot --
+// measured 2026-07-27: spawned 07:14:53, ready.signal at 07:16:03. 60s cut it
+// off just before ready, then the refuse-on-duplicate guard blocked the retry
+// against the very instance that had just come up. 150s covers the slow-plugin
+// case with headroom without hanging a genuinely dead launch too long.
+const READY_TIMEOUT_MS = 150_000;
 const READY_POLL_MS = 500;
 const SHUTDOWN_WAIT_MS = 5_000;
 const HEALTH_CHECK_INTERVAL_MS = 5_000;
