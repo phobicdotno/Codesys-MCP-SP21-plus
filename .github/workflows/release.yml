@@ -1,0 +1,51 @@
+name: Release to npm
+
+# Trusted publishing (OIDC): no npm token, no 2FA prompt. The workflow proves
+# its identity to the npm registry cryptographically. One-time setup on
+# npmjs.com is required before the first run (see docs/RELEASING.md).
+#
+# To release: bump "version" in package.json, commit, then push a matching tag:
+#   git tag v0.15.3
+#   git push origin v0.15.3
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write   # required for npm trusted publishing (OIDC)
+
+jobs:
+  publish:
+    runs-on: windows-latest   # matches ci.yml; build/tests are proven on this image
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm >= 11.5.1; the bundled npm may be older.
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package.json version
+        shell: pwsh
+        run: |
+          $pkgVersion = (Get-Content package.json | ConvertFrom-Json).version
+          $tagVersion = "${{ github.ref_name }}".TrimStart('v')
+          if ($pkgVersion -ne $tagVersion) {
+            Write-Error "Tag v$tagVersion does not match package.json version $pkgVersion - aborting."
+            exit 1
+          }
+          Write-Output "Publishing version $pkgVersion"
+
+      # prepublishOnly runs build + full test suite automatically.
+      - name: Publish
+        run: npm publish
