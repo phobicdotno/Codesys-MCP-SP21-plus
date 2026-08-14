@@ -530,6 +530,29 @@ interface LibrariesData {
 }
 interface PouEntry { path: string; type?: string; declaration?: string; implementation?: string; }
 
+/** Headers renderLibraryMd itself emits. Anything else in an existing library.md
+ * is a hand-maintained section (e.g. a per-FB "## Function Versions" registry)
+ * and must survive regeneration -- a release must never silently delete it. */
+const GENERATED_LIBRARY_MD_HEADERS = /^(# Library inventory|## Versions$|## Devices$|## Container: )/;
+
+/** Extract every non-generated "## " section (header line through the line before
+ * the next header) from an existing library.md so regeneration can re-append them. */
+export function extractCustomLibraryMdSections(existing: string): string {
+  const lines = existing.split(/\r?\n/);
+  const kept: string[] = [];
+  let keeping = false;
+  for (const line of lines) {
+    if (/^#{1,2} /.test(line)) {
+      keeping = !GENERATED_LIBRARY_MD_HEADERS.test(line);
+    }
+    if (keeping) kept.push(line);
+  }
+  // Trim leading/trailing blank lines of the preserved block.
+  while (kept.length > 0 && kept[0].trim() === '') kept.shift();
+  while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+  return kept.join('\n');
+}
+
 function renderLibraryMd(libs: LibrariesData, runtimeAnchorVersion?: string): string {
   const L: string[] = [];
   L.push('# Library inventory -- ' + (libs.project ?? '?'));
@@ -619,8 +642,18 @@ async function regenerateArtifact(
 
     if (artifact === 'library.md') {
       const libs: LibrariesData = JSON.parse(payload);
-      fs.writeFileSync(path.join(projectDir, 'library.md'), renderLibraryMd(libs, version), 'utf-8');
-      log.push(`library.md: ${libs.total_references} refs`);
+      const target = path.join(projectDir, 'library.md');
+      let rendered = renderLibraryMd(libs, version);
+      let preservedNote = '';
+      if (fs.existsSync(target)) {
+        const custom = extractCustomLibraryMdSections(fs.readFileSync(target, 'utf-8'));
+        if (custom) {
+          rendered = rendered.replace(/\s*$/, '\n\n') + custom + '\n';
+          preservedNote = ', custom sections preserved';
+        }
+      }
+      fs.writeFileSync(target, rendered, 'utf-8');
+      log.push(`library.md: ${libs.total_references} refs${preservedNote}`);
     } else {
       const pou: PouEntry[] = JSON.parse(payload);
       const projName = path.basename(escaped, '.project');
