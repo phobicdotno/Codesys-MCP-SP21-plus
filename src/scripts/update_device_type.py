@@ -149,6 +149,36 @@ def _find_first_routed_device(project):
     return None
 
 
+def _routed_device_of_active_application(project):
+    """Multi-device projects: the routed device (gateway+address) whose
+    subtree holds the ACTIVE application, or None."""
+    try:
+        node = project.active_application
+    except Exception:
+        return None
+    guard = 0
+    while node is not None and guard < 32 and not hasattr(node, 'active_application'):
+        guard += 1
+        if _is_device(node):
+            try:
+                gw = node.get_gateway()
+                addr = node.get_address()
+            except Exception:
+                return None
+            if gw is None:
+                return None
+            gw_str = str(gw)
+            if not gw_str or gw_str == '00000000-0000-0000-0000-000000000000':
+                return None
+            if not addr or not str(addr).strip():
+                return None
+            return node
+        try:
+            node = node.parent
+        except Exception:
+            return None
+    return None
+
 def _find_any_top_level_device(project):
     """Final fallback: first direct child of the project that is a device,
     regardless of gateway/address state. Used when the project hasn't been
@@ -197,6 +227,8 @@ try:
     # ensure_project_open helper is included by the TS caller, so the project
     # is already open by the time this script runs.
     project = script_engine.projects.primary
+    if 'apply_application_selection' in globals():
+        apply_application_selection(project)
     if project is None:
         msg = "No primary project open -- ensure_project_open should have opened it."
         print("ERROR: %s" % msg)
@@ -218,7 +250,7 @@ try:
             print("SCRIPT_ERROR: %s" % msg)
             sys.exit(1)
     else:
-        target_dev = _find_first_routed_device(project)
+        target_dev = _routed_device_of_active_application(project) or _find_first_routed_device(project)
         if target_dev is None:
             target_dev = _find_any_top_level_device(project)
         if target_dev is None:

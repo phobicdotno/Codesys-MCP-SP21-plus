@@ -6,6 +6,8 @@ PARENT_PATH_REL = "{PARENT_PATH}"
 try:
     print("DEBUG: create_folder script: Name='%s', ParentPath='%s', Project='%s'" % (FOLDER_NAME, PARENT_PATH_REL, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     if not FOLDER_NAME: raise ValueError("Folder name empty.")
     if not PARENT_PATH_REL: raise ValueError("Parent path empty.")
 

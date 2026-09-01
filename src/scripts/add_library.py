@@ -348,18 +348,50 @@ def _try_remove(lm, name):
 try:
     print("DEBUG: add_library script: Library='%s', Project='%s'" % (LIBRARY_NAME, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     if not LIBRARY_NAME:
         raise ValueError("Library name empty.")
 
     project_name = os.path.basename(PROJECT_FILE_PATH)
 
+    # Multi-device projects: each Application has its own Library Manager.
+    # Prefer the one under the ACTIVE application (applicationPath /
+    # set_active_application) before the project-wide discovery below.
+    lib_manager = None
+    try:
+        _app = primary_project.active_application
+    except Exception:
+        _app = None
+    if _app is not None:
+        try:
+            if getattr(_app, 'has_library_manager', False):
+                lib_manager = _app.get_library_manager()
+        except Exception as e:
+            print("DEBUG: active application get_library_manager() failed: %s" % e)
+        if not lib_manager:
+            try:
+                for child in _app.get_children(False):
+                    try:
+                        if child.get_name() == "Library Manager":
+                            lib_manager = child
+                            break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if lib_manager:
+            try:
+                print("DEBUG: Using Library Manager of the active application '%s'" % _app.get_name())
+            except Exception:
+                pass
+
     # Find the project's Library Manager via the documented container API
     # (has_library_manager / get_library_manager) -- the same approach
     # list_project_libraries.py uses. The legacy name-search fallback is
     # kept below for SPs that don't expose the marker interface.
-    lib_manager = None
     try:
-        if hasattr(primary_project, 'has_library_manager') and primary_project.has_library_manager:
+        if not lib_manager and hasattr(primary_project, 'has_library_manager') and primary_project.has_library_manager:
             lib_manager = primary_project.get_library_manager()
             print("DEBUG: Found Library Manager via project.get_library_manager()")
     except Exception as e:

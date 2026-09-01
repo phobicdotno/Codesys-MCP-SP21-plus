@@ -93,6 +93,44 @@ describe('E2E Script Preparation - multi-application tools', () => {
     expect(script).toContain("_maintain_version_gvl_in_app(primary_project, app, version_str)");
   });
 
+  it('task, library and symbol-config tools resolve against the active application first', () => {
+    for (const name of ['list_tasks', 'add_pou_to_task', 'remove_pou_from_task']) {
+      const src = fs.readFileSync(path.join(scriptsDir, `${name}.py`), 'utf-8');
+      expect(src, name).toContain('tc = find_task_config(_app)');
+      expect(src, name).toContain('tc = find_task_config(primary_project)');
+    }
+    for (const name of ['create_task', 'configure_task']) {
+      const src = fs.readFileSync(path.join(scriptsDir, `${name}.py`), 'utf-8');
+      expect(src, name).toContain('_scopes.append(_app)');
+      expect(src, name).toContain('_scopes.append(primary_project)');
+    }
+    for (const name of ['add_library', 'remove_library']) {
+      const src = fs.readFileSync(path.join(scriptsDir, `${name}.py`), 'utf-8');
+      expect(src, name).toContain('Using Library Manager of the active application');
+      expect(src, name).toContain("if not lib_manager and hasattr(primary_project, 'has_library_manager')");
+    }
+    const sym = fs.readFileSync(path.join(scriptsDir, 'find_symbol_config_object.py'), 'utf-8');
+    expect(sym).toContain('in_app = find_all_symbol_config_objects(app)');
+    const dev = fs.readFileSync(path.join(scriptsDir, 'find_device_object.py'), 'utf-8');
+    expect(dev).toContain('node = primary_project.active_application');
+    const udt = fs.readFileSync(path.join(scriptsDir, 'update_device_type.py'), 'utf-8');
+    expect(udt).toContain('_routed_device_of_active_application(project) or _find_first_routed_device(project)');
+    const adu = fs.readFileSync(path.join(scriptsDir, 'add_device_user.py'), 'utf-8');
+    expect(adu).toContain('node = primary_project.active_application');
+  });
+
+  it('every hooked script calls the selection hook exactly once', () => {
+    for (const name of ['list_tasks', 'add_pou_to_task', 'remove_pou_from_task', 'create_task', 'configure_task',
+      'add_library', 'remove_library', 'create_pou', 'create_dut', 'create_gvl', 'create_folder',
+      'scan_network_devices', 'find_symbol_config', 'list_all_signatures', 'list_all_datatypes',
+      'list_configured_symbols', 'get_symbol_config_settings', 'set_symbol_config_settings',
+      'set_symbol_access', 'set_signature_access_bulk', 'export_symbol_xsd', 'add_device_user',
+      'update_device_type', 'ensure_online_connection']) {
+      const src = fs.readFileSync(path.join(scriptsDir, `${name}.py`), 'utf-8');
+      expect(src.split('apply_application_selection(').length - 1, name).toBe(1);
+    }
+  });
+
   it('server.ts wires applicationPath on every application-scoped tool', () => {
     const server = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'server.ts'), 'utf-8').replace(/\r\n/g, '\n');
     for (const tool of ['compile_project', 'get_compile_messages', 'application_build', 'check_online_change',
@@ -101,7 +139,13 @@ describe('E2E Script Preparation - multi-application tools', () => {
       'force_variables', 'unforce_variables', 'list_forced_variables', 'source_download', 'source_upload',
       'plc_file_list', 'plc_file_transfer', 'plc_file_delete', 'download_to_device', 'start_stop_application',
       'read_running_version_online', 'bump_project_version', 'verify_device_reachable',
-      'rebind_device_to_scan_result']) {
+      'rebind_device_to_scan_result',
+      'list_tasks', 'add_pou_to_task', 'remove_pou_from_task', 'create_task', 'configure_task',
+      'add_library', 'remove_library', 'create_pou', 'create_dut', 'create_gvl', 'create_folder',
+      'scan_network_devices', 'find_symbol_config', 'list_all_signatures', 'list_all_datatypes',
+      'list_configured_symbols', 'get_symbol_config_settings', 'set_symbol_config_settings',
+      'set_symbol_access', 'set_signature_access_bulk', 'export_symbol_xsd', 'add_device_user',
+      'update_device_type']) {
       const i = server.indexOf(`\n  s.tool(\n    '${tool}',`);
       expect(i, `${tool} registered`).toBeGreaterThan(-1);
       const j = server.indexOf('\n  s.tool(\n', i + 20);

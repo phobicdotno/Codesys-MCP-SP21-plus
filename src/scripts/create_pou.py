@@ -20,6 +20,8 @@ pou_type_map = {
 try:
     print("DEBUG: create_pou script: Name='%s', Type='%s', Lang='%s', ParentPath='%s', Project='%s'" % (POU_NAME, POU_TYPE_STR, IMPL_LANGUAGE_STR, PARENT_PATH_REL, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     if not POU_NAME: raise ValueError("POU name empty.")
     if not PARENT_PATH_REL: raise ValueError("Parent path empty.")
 

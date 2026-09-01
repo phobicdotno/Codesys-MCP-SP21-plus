@@ -1698,6 +1698,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Creates a new Program, Function Block, or Function POU within the specified CODESYS project. Pass declarationCode/implementationCode to set the POU body in the same call (otherwise the POU is created with the IDE default stub and needs a follow-up set_pou_code).',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       name: z.string().describe("Name for the new POU (must be a valid IEC identifier)."),
       type: z.string().describe("Type of POU: Program, FunctionBlock, or Function."),
       language: z.string().describe("Implementation language: ST, LD, FBD, SFC, IL, or CFC."),
@@ -1705,7 +1706,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       declarationCode: z.string().optional().describe("Full declaration part (PROGRAM/FUNCTION_BLOCK ... VAR...END_VAR) to apply after creation. ST only."),
       implementationCode: z.string().optional().describe("Implementation logic to apply after creation. ST only."),
     },
-    async (args: { projectFilePath: string; name: string; type: string; language: string; parentPath: string; declarationCode?: string; implementationCode?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; name: string; type: string; language: string; parentPath: string; declarationCode?: string; implementationCode?: string }) => {
       // Same reserved-identifier gate as set_pou_code: refuse before touching the project.
       const reservedWarnings = findReservedIecIdentifiers(args.declarationCode);
       if (reservedWarnings.length > 0) {
@@ -1724,7 +1725,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'create_pou',
         {
-          PROJECT_FILE_PATH: escProjPath,
+          PROJECT_FILE_PATH: escProjPath, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           POU_NAME: args.name.trim(),
           POU_TYPE_STR: args.type,
           IMPL_LANGUAGE_STR: args.language,
@@ -1734,7 +1735,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
           SET_DECLARATION: args.declarationCode !== undefined ? 'True' : 'False',
           SET_IMPLEMENTATION: args.implementationCode !== undefined ? 'True' : 'False',
         },
-        ['ensure_project_open', 'find_object_by_path']
+        ['ensure_project_open', 'select_application', 'find_object_by_path']
       );
       const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
@@ -2070,22 +2071,23 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Creates a new Data Unit Type (DUT) — structure, enumeration, union, or alias — within the specified CODESYS project.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       name: z.string().describe("Name for the new DUT (must be a valid IEC identifier)."),
       dutType: z.string().describe("Type of DUT: Structure, Enumeration, Union, or Alias."),
       parentPath: z.string().describe("Relative path under project root or application (e.g., 'Application')."),
     },
-    async (args: { projectFilePath: string; name: string; dutType: string; parentPath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; name: string; dutType: string; parentPath: string }) => {
       const escProjPath = resolvePath(args.projectFilePath, workspaceDir);
       const sanParentPath = sanitizePouPath(args.parentPath);
       const script = scriptManager.prepareScriptWithHelpers(
         'create_dut',
         {
-          PROJECT_FILE_PATH: escProjPath,
+          PROJECT_FILE_PATH: escProjPath, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           DUT_NAME: args.name.trim(),
           DUT_TYPE_STR: args.dutType,
           PARENT_PATH: sanParentPath,
         },
-        ['ensure_project_open', 'find_object_by_path']
+        ['ensure_project_open', 'select_application', 'find_object_by_path']
       );
       const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
@@ -2103,11 +2105,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Creates a new Global Variable List (GVL) within the specified CODESYS project.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       name: z.string().describe("Name for the new GVL (must be a valid IEC identifier)."),
       parentPath: z.string().describe("Relative path under project root or application (e.g., 'Application')."),
       declarationCode: z.string().optional().describe("Optional initial declaration code for the GVL (VAR_GLOBAL...END_VAR)."),
     },
-    async (args: { projectFilePath: string; name: string; parentPath: string; declarationCode?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; name: string; parentPath: string; declarationCode?: string }) => {
       // Block on IEC reserved identifiers in declarationCode BEFORE
       // creating the GVL. Refuse rather than create a broken GVL.
       const reservedWarnings = findReservedIecIdentifiers(args.declarationCode);
@@ -2126,12 +2129,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'create_gvl',
         {
-          PROJECT_FILE_PATH: escProjPath,
+          PROJECT_FILE_PATH: escProjPath, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           GVL_NAME: args.name.trim(),
           PARENT_PATH: sanParentPath,
           DECLARATION_CONTENT: sanDecl,
         },
-        ['ensure_project_open', 'find_object_by_path']
+        ['ensure_project_open', 'select_application', 'find_object_by_path']
       );
       const flushNote = await maybeFlushEditorViews();
       const result = await executor.executeScript(script);
@@ -2149,20 +2152,21 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Creates an organizational folder within the CODESYS project tree.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       folderName: z.string().describe("Name for the new folder."),
       parentPath: z.string().describe("Relative path under project root or application (e.g., 'Application')."),
     },
-    async (args: { projectFilePath: string; folderName: string; parentPath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; folderName: string; parentPath: string }) => {
       const escProjPath = resolvePath(args.projectFilePath, workspaceDir);
       const sanParentPath = sanitizePouPath(args.parentPath);
       const script = scriptManager.prepareScriptWithHelpers(
         'create_folder',
         {
-          PROJECT_FILE_PATH: escProjPath,
+          PROJECT_FILE_PATH: escProjPath, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           FOLDER_NAME: args.folderName.trim(),
           PARENT_PATH: sanParentPath,
         },
-        ['ensure_project_open', 'find_object_by_path']
+        ['ensure_project_open', 'select_application', 'find_object_by_path']
       );
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(
@@ -2179,13 +2183,14 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Lists the tasks in the project's Task Configuration: each task's name, best-effort properties (priority/interval/type where the SP exposes them), and its ordered POU call list. Read-only.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escProjPath = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'list_tasks',
-        { PROJECT_FILE_PATH: escProjPath },
-        ['ensure_project_open']
+        { PROJECT_FILE_PATH: escProjPath, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
       const success = result.success && result.output.includes('SCRIPT_SUCCESS');
@@ -2208,21 +2213,22 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Adds (appends) or inserts a Program POU into a task's call list in the project's Task Configuration. Wraps the ScriptEngine task.pous.add / .insert API. Omit index to append; pass a 0-based index to insert. The POU must be a PROGRAM that already exists in the project. NOTE: editing the task configuration is blocked while logged into a device -- disconnect first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       taskName: z.string().describe("Name of the target task in the Task Configuration (e.g., 'MainTask', 'Can1_N2k')."),
       pouName: z.string().describe("Name of the Program POU to add to the task's call list (e.g., 'Can2_N2k')."),
       index: z.number().int().optional().describe("Optional 0-based position to insert at. Omit to append at the end."),
     },
-    async (args: { projectFilePath: string; taskName: string; pouName: string; index?: number }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; taskName: string; pouName: string; index?: number }) => {
       const escProjPath = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'add_pou_to_task',
         {
-          PROJECT_FILE_PATH: escProjPath,
+          PROJECT_FILE_PATH: escProjPath, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           TASK_NAME: args.taskName.trim(),
           POU_NAME: args.pouName.trim(),
           INSERT_INDEX: args.index === undefined ? '' : String(args.index),
         },
-        ['ensure_project_open']
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(
@@ -2239,19 +2245,20 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Removes a Program POU from a task's call list in the project's Task Configuration. Removes only the call in that task; does not delete the POU object itself. Blocked while logged into a device -- disconnect first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       taskName: z.string().describe("Name of the task in the Task Configuration."),
       pouName: z.string().describe("Name of the Program POU to remove from the task's call list."),
     },
-    async (args: { projectFilePath: string; taskName: string; pouName: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; taskName: string; pouName: string }) => {
       const escProjPath = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'remove_pou_from_task',
         {
-          PROJECT_FILE_PATH: escProjPath,
+          PROJECT_FILE_PATH: escProjPath, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           TASK_NAME: args.taskName.trim(),
           POU_NAME: args.pouName.trim(),
         },
-        ['ensure_project_open']
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(
@@ -2331,21 +2338,22 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Change a project's PLC device type in-place, preserving the Application / POU / library subtree underneath. Wraps ScriptObject.update(device_id) per the CODESYS Forge snippet (forge.codesys.com/tol/scripting/snippets/20/). Used for retargeting between device families (e.g. WAGO PFC200 -> CODESYS Control for Raspberry Pi MC SL when porting a project to a Linux PLC). NOT a fallback to remove+add: if the in-place update raises, the tool fails loud rather than destroying the subtree.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       targetDeviceName: z.string().describe("Substring of the target device's display name in the CODESYS device repository (e.g. 'CODESYS Control for Raspberry Pi MC SL', 'CODESYS Control for Linux ARM64 SL', 'CODESYS Control Win V3 x64'). Required."),
       devicePath: z.string().optional().describe("Slash-separated path under the project root to the device to update (e.g. 'MainPLC'). Omit to auto-pick the first device with a configured gateway+address (the deployed PLC on every MR project), falling back to the first top-level device if no routes are configured yet."),
       targetVersion: z.string().optional().describe("Exact target device version (e.g. '4.13.0.0'). Omit to use the latest installed version of the matching device."),
     },
-    async (args: { projectFilePath: string; targetDeviceName: string; devicePath?: string; targetVersion?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; targetDeviceName: string; devicePath?: string; targetVersion?: string }) => {
       const escProjPath = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'update_device_type',
         {
-          PROJECT_FILE_PATH: escProjPath,
+          PROJECT_FILE_PATH: escProjPath, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           DEVICE_PATH: (args.devicePath ?? '').trim(),
           TARGET_NAME: args.targetDeviceName.trim(),
           TARGET_VERSION: (args.targetVersion ?? '').trim(),
         },
-        ['ensure_project_open']
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script, 120_000);
       return await formatModifyingResponse(
@@ -3702,14 +3710,15 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Creates a new task in the Task Configuration (task_config.create_task) and saves. Refuses duplicate names. Follow up with configure_task (kind/priority/interval) and add_pou_to_task.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       taskName: z.string().describe("Name for the new task (valid IEC identifier)."),
     },
-    async (args: { projectFilePath: string; taskName: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; taskName: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'create_task',
-        { PROJECT_FILE_PATH: escaped, TASK_NAME: args.taskName.trim() },
-        ['ensure_project_open']
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), TASK_NAME: args.taskName.trim() },
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(result, `Task '${args.taskName}' created. Project saved.`, escaped, mirrorCtx);
@@ -3721,6 +3730,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Sets properties on an existing task and saves: kind (cyclic/freewheeling/event/external_event/status), priority (0-31), interval + intervalUnit (for cyclic/external_event), event POU (for event kind). Only provided fields change. Use list_tasks to inspect.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       taskName: z.string().describe("Name of the task to configure."),
       kind: z.enum(['cyclic', 'freewheeling', 'event', 'external_event', 'status']).optional().describe("Task kind (KindOfTask)."),
       priority: z.string().optional().describe("Task priority, e.g. '1' (0 = highest)."),
@@ -3728,7 +3738,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       intervalUnit: z.string().optional().describe("Interval unit, e.g. 'ms' or 'us'."),
       event: z.string().optional().describe("Event to trigger the task (for kind=event)."),
     },
-    async (args: { projectFilePath: string; taskName: string; kind?: string; priority?: string; interval?: string; intervalUnit?: string; event?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; taskName: string; kind?: string; priority?: string; interval?: string; intervalUnit?: string; event?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       if (!args.kind && !args.priority && !args.interval && !args.intervalUnit && !args.event) {
         return { content: [{ type: 'text' as const, text: 'Error: provide at least one property to configure.' }], isError: true };
@@ -3736,7 +3746,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'configure_task',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           TASK_NAME: args.taskName.trim(),
           KIND: args.kind ?? '',
           PRIORITY: args.priority ?? '',
@@ -3744,7 +3754,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
           INTERVAL_UNIT: args.intervalUnit ?? '',
           EVENT: pyStringLiteral(args.event ?? ''),
         },
-        ['ensure_project_open']
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
       return await formatModifyingResponse(result, `Task '${args.taskName}' configured. Project saved.`, escaped, mirrorCtx);
@@ -3960,14 +3970,15 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Drive the gateway's Scan Network on the project's configured device. Returns the list of physical CODESYS targets currently visible to the gateway (device_name, type_name, vendor_name, address, device_id). Useful when the cached device address is stale and you need to find where the PLC actually is now. Set useCache=true to return the gateway's last scan result without re-scanning (cheap polling).",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       useCache: z.boolean().optional().describe("If true, return the gateway's cached scan result if available. Default false (live scan)."),
     },
-    async (args: { projectFilePath: string; useCache?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; useCache?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'scan_network_devices',
-        { PROJECT_FILE_PATH: escaped, USE_CACHE: args.useCache ? '1' : '0' },
-        ['ensure_project_open', 'find_target_device']
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), USE_CACHE: args.useCache ? '1' : '0' },
+        ['ensure_project_open', 'select_application', 'find_target_device']
       );
       const result = await executor.executeScript(script, 60_000);
       const success = result.success && result.output.includes('SCRIPT_SUCCESS');
@@ -4082,23 +4093,24 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Add (or update password of) a user in the PLC runtime's live User Management. Required for OPC UA authentication on CODESYS Control SP16+ -- the OPC UA server reads its UserIdentityToken policies from this database, NOT from CODESYSControl.cfg. Without at least one user, UaExpert/OPC UA clients get BadIdentityTokenInvalid. Requires an active device session; the script ensures one is open before calling create_live_user_management().",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       userName: z.string().describe("User name to add (or whose password to update if user already exists)."),
       userPassword: z.string().describe("Password for the user."),
       canChangePassword: z.boolean().optional().describe("If true (default), the user can change their own password."),
       mustChangePassword: z.boolean().optional().describe("If true, the user must change their password on next login. Default false."),
     },
-    async (args: { projectFilePath: string; userName: string; userPassword: string; canChangePassword?: boolean; mustChangePassword?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; userName: string; userPassword: string; canChangePassword?: boolean; mustChangePassword?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'add_device_user',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           USER_NAME: args.userName,
           USER_PASSWORD: args.userPassword,
           CAN_CHANGE_PASSWORD: args.canChangePassword === false ? '0' : '1',
           MUST_CHANGE_PASSWORD: args.mustChangePassword === true ? '1' : '0',
         },
-        ['ensure_project_open']
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script, 30_000);
       const success = result.success && result.output.includes('SCRIPT_SUCCESS');
@@ -4392,23 +4404,24 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Adds a library reference to the CODESYS project. **Refuses upfront** if the library name does not resolve in the installed library repository (Tools > Library Repository) -- this prevents the silent-broken-placeholder bug where add_placeholder() creates a hollow reference that bricks the next project open with 'placeholder library X could not be resolved'. Install the library first (Library Repository for stock libs, CODESYS Installer for SL/add-on packages), or pass allowUnresolved=true to opt into the dangerous behaviour. Default add path is add_placeholder() for the modern '<Name>, * (System)' convention; pass direct=true for the legacy specific-version pin. Pre-checks lm.references and no-ops with a confirmation message if a reference with the same name already exists, unless force=true.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       libraryName: z.string().describe("Name of the library to add (e.g., 'Standard', 'Util', 'CAA Memory'). Must match exactly an installed library in the CODESYS Library Repository unless allowUnresolved=true."),
       direct: z.boolean().optional().describe("If true, use direct add_library() (specific-version pin) instead of the default add_placeholder() (resolves at compile)."),
       force: z.boolean().optional().describe("If true, add even if a reference with the same name already exists (creates a duplicate). Default: dedup -- silently no-op with a confirmation message."),
       allowUnresolved: z.boolean().optional().describe("DANGEROUS. If true, skip the pre-flight 'is this library installed?' check and add a placeholder anyway. Will brick the next project open if the library is genuinely not installed. Only use when you intentionally want a placeholder for a not-yet-installed library."),
     },
-    async (args: { projectFilePath: string; libraryName: string; direct?: boolean; force?: boolean; allowUnresolved?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; libraryName: string; direct?: boolean; force?: boolean; allowUnresolved?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'add_library',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           LIBRARY_NAME: args.libraryName.trim(),
           USE_DIRECT: args.direct ? '1' : '0',
           FORCE_DUP: args.force ? '1' : '0',
           ALLOW_UNRESOLVED: args.allowUnresolved ? '1' : '0',
         },
-        ['ensure_project_open']
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
       // Pick wording from the script's branch (dedup vs add) instead of
@@ -4427,20 +4440,21 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Removes a library reference from the CODESYS project's Library Manager. Idempotent: if the named library is not currently referenced, the tool succeeds with a no-op confirmation rather than an error. Accepts either the bare library name (e.g. 'Standard') or the fully-qualified 'Name, Version (Company)' form. Verifies removal in lm.references before saving. Per helpme-codesys.com ScriptLibManObject docs and the local SP22 stub Stubs/scriptengine/ScriptLibManObject.pyi.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       libraryName: z.string().describe("Bare name of the library to remove (e.g. 'Standard', 'Util'). Must match a reference currently present in the project's Library Manager."),
       libraryFqnOrName: z.string().optional().describe("Optional fully-qualified name 'Name, Version (Company)' to target a specific version when multiple references with the same bare name exist. Falls back to libraryName when omitted."),
     },
-    async (args: { projectFilePath: string; libraryName: string; libraryFqnOrName?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; libraryName: string; libraryFqnOrName?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const fqn = (args.libraryFqnOrName || args.libraryName).trim();
       const script = scriptManager.prepareScriptWithHelpers(
         'remove_library',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           LIBRARY_NAME: args.libraryName.trim(),
           LIBRARY_FQN_OR_NAME: fqn,
         },
-        ['ensure_project_open']
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
       // Script emits "Library Not Present:" on the idempotent no-op path
@@ -4492,19 +4506,20 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     return bits;
   }
 
-  const SYMCONF_HELPERS = ['ensure_project_open', 'find_symbol_config_object'];
+  const SYMCONF_HELPERS = ['ensure_project_open', 'select_application', 'select_application', 'find_symbol_config_object'];
 
   s.tool(
     'find_symbol_config',
     "Locate the Symbol Configuration object(s) in a CODESYS project. Walks the project tree and reports every node where is_symbol_config==True (one per Application typically). Returns object name, slash-separated path, and id. If no Symbol Configuration exists, the tool returns count=0 and hints at create_symbol_config. Read-only.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'find_symbol_config',
-        { PROJECT_FILE_PATH: escaped },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
         SYMCONF_HELPERS
       );
       const result = await executor.executeScript(script);
@@ -4517,14 +4532,15 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "List every signature (POU / FunctionBlock / Method / Function) the Symbol Configuration could potentially export. Wraps ScriptSymbolConfigObject.get_all_signatures(compile=bool). Default compile=false returns the cached list (may be empty if the application has not been built since opening). Pass compile=true to force application.build() first -- authoritative but slow on large projects.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       compile: z.boolean().optional().describe("If true, build the application before generating the list (slow but authoritative). Default false uses the cached list."),
     },
-    async (args: { projectFilePath: string; compile?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; compile?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'list_all_signatures',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           COMPILE_FLAG: args.compile ? '1' : '0',
         },
         SYMCONF_HELPERS
@@ -4539,14 +4555,15 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "List every data type (struct / enum / alias / union) the Symbol Configuration could potentially export. Wraps ScriptSymbolConfigObject.get_all_datatypes(compile=bool). Same compile=true semantics as list_all_signatures.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       compile: z.boolean().optional().describe("If true, build the application before generating the list. Default false uses the cached list."),
     },
-    async (args: { projectFilePath: string; compile?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; compile?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'list_all_datatypes',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           COMPILE_FLAG: args.compile ? '1' : '0',
         },
         SYMCONF_HELPERS
@@ -4561,12 +4578,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "List the signatures + datatypes that are CURRENTLY configured for export by the Symbol Configuration (i.e. the user has ticked them in the IDE grid, or set_symbol_access has set their configured_access). For each variable: configured_access (what's set), maximal_access (the upper bound), effective_access (post-clamp), and exported_via_attribute (true if the export was driven by a {attribute 'symbol' := ...} pragma). Read-only.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'list_configured_symbols',
-        { PROJECT_FILE_PATH: escaped },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
         SYMCONF_HELPERS
       );
       const result = await executor.executeScript(script);
@@ -4579,12 +4597,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Read every knob on the Symbol Configuration object: content_feature_flags (OPC UA / IncludeComments / IncludeAttributes / IncludeExecutables / etc.), symbol_attribute_filter_type and _data, symbol_comment_filter_type, enable_direct_io_access (plus any obstacles that would block enabling it), and the client-side layout calculator. Both 'configured' and 'effective' values are reported where the API distinguishes them. Read-only.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'get_symbol_config_settings',
-        { PROJECT_FILE_PATH: escaped },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
         SYMCONF_HELPERS
       );
       const result = await executor.executeScript(script);
@@ -4637,6 +4656,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Partial-update of any subset of Symbol Configuration knobs. Only fields you supply are written; others are left alone. Saves the project after applying changes. Refuses to enable direct I/O access if check_effective_direct_io_access reports obstacles. AUTO-COMPILE: on success the tool runs compile_project automatically so the new settings land in the symbol artifacts.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       contentFeatureFlags: z.array(z.string()).optional().describe("Bitmask members to combine into content_feature_flags. Allowed members: SupportOPCUA, IncludeComments, IncludeAttributes, IncludeTypeNodeAttributes, IncludeExecutables, UseEmptyNamespaceByDefault, XmlIncludeNodeFlags, XmlIncludeComments, XmlIncludeAttributes, XmlIncludeTypeNodeAttributes, XmlIncludeExecutables. Pass [] or omit to leave unchanged. Pass ['None'] to clear all flags."),
       attributeFilterType: z.enum(['None', 'All', 'SimpleIdentifiers', 'Prefix', 'Regex']).optional().describe("symbol_attribute_filter_type. None disables, All matches every attribute, SimpleIdentifiers matches single IEC identifiers, Prefix/Regex use attributeFilterData."),
       attributeFilterData: z.string().optional().describe("Filter pattern for attributeFilterType=Prefix or Regex. Ignored for None/All/SimpleIdentifiers."),
@@ -4644,7 +4664,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       enableDirectIoAccess: z.boolean().optional().describe("enable_direct_io_access. Refused if obstacles exist (compiler version too old, or symbol config is configured as a child object)."),
       layoutCalculator: z.enum(['compatibility', 'optimized']).optional().describe("Which client-side layout calculator GUID to set."),
     },
-    async (args: {
+    async (args: { applicationPath?: string;
       projectFilePath: string;
       contentFeatureFlags?: string[];
       attributeFilterType?: 'None' | 'All' | 'SimpleIdentifiers' | 'Prefix' | 'Regex';
@@ -4661,7 +4681,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'set_symbol_config_settings',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           APPLY_CONTENT_FLAGS: applyContentFlags ? '1' : '0',
           CONTENT_FLAGS_INT: applyContentFlags ? String(cffInt) : '0',
           APPLY_ATTR_FILTER_TYPE: args.attributeFilterType !== undefined ? '1' : '0',
@@ -4693,12 +4713,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Set the configured_access for a single variable inside one signature. Locates the signature by full-qualified name (FQN), e.g. 'Application.PLC_PRG'. If the signature isn't yet in the configured set the tool tries the all-signatures view too -- so you can use this to TICK a not-yet-exported variable. Saves the project. AUTO-COMPILE: on success the tool runs compile_project automatically so the new access lands in the symbol artifacts.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       signatureFqn: z.string().describe("Full-qualified name of the signature, e.g. 'Application.PLC_PRG' or 'Standard.TON'."),
       variableName: z.string().describe("The variable's name as it appears in sig.variables, e.g. 'nCounter'."),
       access: z.enum(['None', 'ReadOnly', 'WriteOnly', 'ReadWrite']).describe("Desired access. None=hide. ReadOnly=expose for read. WriteOnly=expose for write. ReadWrite=both."),
       libraryId: z.string().optional().describe("Optional library_id to disambiguate when the FQN exists in multiple namespaces."),
     },
-    async (args: {
+    async (args: { applicationPath?: string;
       projectFilePath: string;
       signatureFqn: string;
       variableName: string;
@@ -4709,7 +4730,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'set_symbol_access',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           SIGNATURE_FQN: args.signatureFqn,
           VARIABLE_NAME: args.variableName,
           ACCESS: args.access,
@@ -4734,11 +4755,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Set configured_access for EVERY variable inside a signature to the same value. Variables whose maximal_access doesn't permit the requested level are skipped (reported in the response). Useful for 'expose all of PLC_PRG as ReadWrite' in one shot. AUTO-COMPILE: on success the tool runs compile_project automatically so the new access lands in the symbol artifacts.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       signatureFqn: z.string().describe("Full-qualified name of the signature, e.g. 'Application.PLC_PRG'."),
       access: z.enum(['None', 'ReadOnly', 'WriteOnly', 'ReadWrite']).describe("Access level to apply to every variable."),
       libraryId: z.string().optional().describe("Optional library_id to disambiguate."),
     },
-    async (args: {
+    async (args: { applicationPath?: string;
       projectFilePath: string;
       signatureFqn: string;
       access: 'None' | 'ReadOnly' | 'WriteOnly' | 'ReadWrite';
@@ -4748,7 +4770,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'set_signature_access_bulk',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           SIGNATURE_FQN: args.signatureFqn,
           ACCESS: args.access,
           LIBRARY_ID: args.libraryId ?? '',
@@ -4771,15 +4793,16 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Write the Symbol Configuration XSD schema (the bytes returned by get_symbol_configuration_xsd()) to a file. The schema describes the XML the runtime emits at download. Use it to validate downstream symbol XML in CI. Refuses if the parent directory of outputFilePath doesn't exist.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       outputFilePath: z.string().describe("Where to write the XSD bytes (UTF-8). Parent directory must exist."),
     },
-    async (args: { projectFilePath: string; outputFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; outputFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const outEscaped = resolvePath(args.outputFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'export_symbol_xsd',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           OUTPUT_FILE_PATH: outEscaped,
         },
         SYMCONF_HELPERS

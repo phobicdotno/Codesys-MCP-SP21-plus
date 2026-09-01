@@ -114,6 +114,8 @@ try:
     print("DEBUG: set_symbol_access: Project='%s' fqn='%s' var='%s' access='%s' lib='%s'" % (
         PROJECT_FILE_PATH, SIGNATURE_FQN, VARIABLE_NAME, ACCESS, LIBRARY_ID))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     project_basename = os.path.basename(PROJECT_FILE_PATH)
 
     sc_obj = ensure_symbol_config(primary_project)

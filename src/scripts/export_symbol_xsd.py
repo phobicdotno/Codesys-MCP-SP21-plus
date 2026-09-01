@@ -18,6 +18,8 @@ try:
     print("DEBUG: export_symbol_xsd: Project='%s' Output='%s'" % (
         PROJECT_FILE_PATH, OUTPUT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
 
     sc_obj = ensure_symbol_config(primary_project)
     sc_path = symbol_config_path(primary_project, sc_obj)

@@ -5,13 +5,28 @@ TASK_NAME = "{TASK_NAME}"
 try:
     print("DEBUG: create_task script: Task='%s', Project='%s'" % (TASK_NAME, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     if not TASK_NAME:
         raise ValueError("Task name empty.")
 
+    # Multi-device projects: search the ACTIVE application first, then the
+    # whole project.
     task_config = None
-    for child in primary_project.get_children(True):
-        if hasattr(child, 'is_task_configuration') and child.is_task_configuration:
-            task_config = child
+    _scopes = []
+    try:
+        _app = primary_project.active_application
+        if _app is not None:
+            _scopes.append(_app)
+    except Exception:
+        pass
+    _scopes.append(primary_project)
+    for _scope in _scopes:
+        for child in _scope.get_children(True):
+            if hasattr(child, 'is_task_configuration') and child.is_task_configuration:
+                task_config = child
+                break
+        if task_config is not None:
             break
     if task_config is None:
         raise RuntimeError("No Task Configuration object found in project.")

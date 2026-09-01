@@ -12,6 +12,8 @@ import sys, scriptengine as script_engine, os, traceback, json
 try:
     print("DEBUG: find_symbol_config: Project='%s'" % PROJECT_FILE_PATH)
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     project_basename = os.path.basename(PROJECT_FILE_PATH)
 
     matches = find_all_symbol_config_objects(primary_project)

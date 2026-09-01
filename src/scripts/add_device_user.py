@@ -21,8 +21,30 @@ MUST_CHANGE_PASSWORD = "{MUST_CHANGE_PASSWORD}" == '1'
 
 
 def _find_target_device_inline(primary_project):
-    """Same selection rule as find_target_device.find_target_device --
-    inlined so this script doesn't depend on that helper being loaded."""
+    """Same selection rule as find_target_device.find_target_device -
+    inlined so this script doesn't depend on that helper being loaded.
+    Multi-device projects: the routed device hosting the ACTIVE application
+    wins; otherwise the first routed device."""
+    try:
+        node = primary_project.active_application
+    except Exception:
+        node = None
+    guard = 0
+    while node is not None and guard < 32 and not hasattr(node, 'active_application'):
+        guard += 1
+        if getattr(node, 'is_device', False):
+            try:
+                gw = node.get_gateway()
+                addr = node.get_address()
+                if gw is not None and str(gw) and str(gw) != '00000000-0000-0000-0000-000000000000' and addr and str(addr).strip():
+                    return node
+            except Exception:
+                pass
+            break
+        try:
+            node = node.parent
+        except Exception:
+            break
     for c in primary_project.get_children(True):
         try:
             if not getattr(c, 'is_device', False):
@@ -47,6 +69,8 @@ try:
         raise ValueError("USER_NAME is required.")
     print("DEBUG: add_device_user: Project='%s' user='%s'" % (PROJECT_FILE_PATH, USER_NAME))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     target = _find_target_device_inline(primary_project)
     print("DEBUG: target device: %s" % (target.get_name() if hasattr(target, 'get_name') else '?'))
 

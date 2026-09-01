@@ -46,10 +46,23 @@ def find_task(tc, name):
 
 try:
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     if not TASK_NAME: raise ValueError("Task name empty.")
     if not POU_NAME: raise ValueError("POU name empty.")
 
-    tc = find_task_config(primary_project)
+    # Multi-device projects: use the Task Configuration of the ACTIVE
+    # application (applicationPath / set_active_application); fall back
+    # to the first one in the project.
+    tc = None
+    try:
+        _app = primary_project.active_application
+    except Exception:
+        _app = None
+    if _app is not None:
+        tc = find_task_config(_app)
+    if tc is None:
+        tc = find_task_config(primary_project)
     if tc is None:
         raise ValueError("Task Configuration object not found in project.")
 

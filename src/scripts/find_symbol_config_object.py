@@ -42,8 +42,17 @@ def find_all_symbol_config_objects(node, depth=0, max_depth=10):
 
 
 def find_symbol_config_object(primary_project):
-    """Return the first SymbolConfiguration ScriptObject anywhere in the
-    project tree, or None if not present."""
+    """Return the Symbol Configuration of the ACTIVE application when it has
+    one (multi-device projects: one per application), else the first
+    SymbolConfiguration ScriptObject anywhere in the project tree, or None."""
+    try:
+        app = primary_project.active_application
+    except Exception:
+        app = None
+    if app is not None:
+        in_app = find_all_symbol_config_objects(app)
+        if in_app:
+            return in_app[0]
     matches = find_all_symbol_config_objects(primary_project)
     if not matches:
         return None

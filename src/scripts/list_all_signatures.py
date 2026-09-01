@@ -19,6 +19,8 @@ COMPILE_FLAG = "{COMPILE_FLAG}"
 try:
     print("DEBUG: list_all_signatures: Project='%s', compile=%s" % (PROJECT_FILE_PATH, COMPILE_FLAG))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     project_basename = os.path.basename(PROJECT_FILE_PATH)
 
     sc_obj = ensure_symbol_config(primary_project)

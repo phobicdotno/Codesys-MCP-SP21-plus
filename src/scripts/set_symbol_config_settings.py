@@ -66,6 +66,8 @@ def _enum_member(enum_cls, name):
 try:
     print("DEBUG: set_symbol_config_settings: Project='%s'" % PROJECT_FILE_PATH)
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     project_basename = os.path.basename(PROJECT_FILE_PATH)
 
     sc_obj = ensure_symbol_config(primary_project)

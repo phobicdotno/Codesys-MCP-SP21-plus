@@ -57,16 +57,48 @@ try:
     print("DEBUG: remove_library script: Library='%s', FQN='%s', Project='%s'"
           % (LIBRARY_NAME, LIBRARY_FQN_OR_NAME, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     if not LIBRARY_NAME:
         raise ValueError("Library name empty.")
 
     project_name = os.path.basename(PROJECT_FILE_PATH)
 
-    # Locate the project's Library Manager. Mirror the discovery logic from
-    # add_library.py: container API first, then child walk, then name search.
+    # Multi-device projects: each Application has its own Library Manager.
+    # Prefer the one under the ACTIVE application (applicationPath /
+    # set_active_application) before the project-wide discovery below.
     lib_manager = None
     try:
-        if hasattr(primary_project, 'has_library_manager') and primary_project.has_library_manager:
+        _app = primary_project.active_application
+    except Exception:
+        _app = None
+    if _app is not None:
+        try:
+            if getattr(_app, 'has_library_manager', False):
+                lib_manager = _app.get_library_manager()
+        except Exception as e:
+            print("DEBUG: active application get_library_manager() failed: %s" % e)
+        if not lib_manager:
+            try:
+                for child in _app.get_children(False):
+                    try:
+                        if child.get_name() == "Library Manager":
+                            lib_manager = child
+                            break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if lib_manager:
+            try:
+                print("DEBUG: Using Library Manager of the active application '%s'" % _app.get_name())
+            except Exception:
+                pass
+
+    # Locate the project's Library Manager. Mirror the discovery logic from
+    # add_library.py: container API first, then child walk, then name search.
+    try:
+        if not lib_manager and hasattr(primary_project, 'has_library_manager') and primary_project.has_library_manager:
             lib_manager = primary_project.get_library_manager()
             print("DEBUG: Found Library Manager via project.get_library_manager()")
     except Exception as e:

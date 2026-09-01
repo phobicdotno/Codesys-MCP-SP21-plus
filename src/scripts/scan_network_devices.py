@@ -65,6 +65,8 @@ try:
     print("DEBUG: scan_network_devices: Project='%s', useCache=%s" % (
         PROJECT_FILE_PATH, USE_CACHE))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     target = find_target_device(primary_project)
     print("DEBUG: target device: %s @ %s (gateway=%s)" % (
         target.get_name() if hasattr(target, 'get_name') else '?',

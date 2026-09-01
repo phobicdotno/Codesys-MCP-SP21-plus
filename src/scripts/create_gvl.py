@@ -7,6 +7,8 @@ DECLARATION_CONTENT = """{DECLARATION_CONTENT}"""
 try:
     print("DEBUG: create_gvl script: Name='%s', ParentPath='%s', Project='%s'" % (GVL_NAME, PARENT_PATH_REL, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     if not GVL_NAME: raise ValueError("GVL name empty.")
     if not PARENT_PATH_REL: raise ValueError("Parent path empty.")
 

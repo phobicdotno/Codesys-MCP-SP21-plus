@@ -7,6 +7,8 @@ PARENT_PATH_REL = "{PARENT_PATH}"
 try:
     print("DEBUG: create_dut script: Name='%s', DutType='%s', ParentPath='%s', Project='%s'" % (DUT_NAME, DUT_TYPE_STR, PARENT_PATH_REL, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     if not DUT_NAME: raise ValueError("DUT name empty.")
     if not PARENT_PATH_REL: raise ValueError("Parent path empty.")
 
