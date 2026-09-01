@@ -19,7 +19,7 @@ describe('appendChangelogEntry (I/O)', () => {
     const result = appendChangelogEntry(dir, null, '1.0.0.0', 'seed', ['initial import']);
     expect(result.status).toBe('written');
     const onDisk = await fs.readFile(path.join(dir, 'Changelog.md'), 'utf-8');
-    expect(onDisk).toContain('## v1.0.0.0 -- ');
+    expect(onDisk).toContain('## v1.0.0.0 - ');
   });
 
   it('actually writes the entry to an existing Changelog.md (title-case filename)', async () => {
@@ -37,7 +37,7 @@ describe('appendChangelogEntry (I/O)', () => {
     expect(result.status).toBe('written');
 
     const onDisk = await fs.readFile(seedPath, 'utf-8');
-    expect(onDisk).toContain('## v1.3.1.0 -- ');
+    expect(onDisk).toContain('## v1.3.1.0 - ');
     expect(onDisk).toContain('- new stuff');
     expect(onDisk.indexOf('v1.3.1.0')).toBeLessThan(onDisk.indexOf('v1.3.0.0'));
   });

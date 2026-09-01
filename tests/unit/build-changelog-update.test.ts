@@ -18,8 +18,21 @@ describe('buildChangelogUpdate', () => {
     const result = buildChangelogUpdate(null, '1.0.0.0', null, 'seed', ['initial import']);
     expect(result.status).toBe('written');
     expect(result.style).toBe('ours');
-    expect(result.content).toContain('## v1.0.0.0 -- ');
+    expect(result.content).toContain('## v1.0.0.0 - ');
     expect(result.content).toContain('- initial import');
+  });
+
+  it('recognises the single-hyphen "## vX - date" heading style and inserts newest-first', () => {
+    const existing =
+      '# Changelog\n\n' +
+      '## v1.1.0.0 - 2026-08-26 - ESD: payloads held ON\n\n' +
+      '- prior entry\n';
+    const result = buildChangelogUpdate(existing, '1.1.1.0', '1.1.0.0', 'auto: revision', ['x']);
+    expect(result.status).toBe('written');
+    expect(result.style).toBe('ours');
+    const content = result.content!;
+    expect(content).not.toContain(' -- ');
+    expect(content.indexOf('## v1.1.1.0 - ')).toBeLessThan(content.indexOf('## v1.1.0.0 - '));
   });
 
   it('appends to a Changelog.md that already uses "ours" style, even with the old intro wording', () => {
@@ -49,7 +62,7 @@ describe('buildChangelogUpdate', () => {
     const content = result.content!;
 
     // New entry must be newest-first: appears before the v1.3.0.0 heading.
-    const newIdx = content.indexOf('## v1.3.1.0 -- ');
+    const newIdx = content.indexOf('## v1.3.1.0 - ');
     const oldIdx = content.indexOf('## v1.3.0.0 -- ');
     expect(newIdx).toBeGreaterThan(-1);
     expect(oldIdx).toBeGreaterThan(-1);
