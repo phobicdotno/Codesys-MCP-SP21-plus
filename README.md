@@ -512,6 +512,15 @@ Requires SSH key auth + passwordless sudo for `/usr/bin/strings` on the PLC. If 
 | `get_signature_crc` | Signature CRC of a POU (API-compatibility checks) |
 | `set_exclude_from_build` | Set/clear 'Exclude from build' on an object |
 
+### Network Variable Lists (**NEW**, v0.16.0)
+
+| Tool | Description |
+|------|-------------|
+| `set_nvl_sender` | Make a GVL an NVL sender (UDP): list identifier, task, interval, broadcast address, port, pack/checksum/acknowledge |
+| `create_nvl_receiver` | Add a Network Variable List (Receiver) object bound to a sender GVL |
+
+The scripting API has no NVL support; these tools use the IDE's Automation Platform API (`IGVLObject2.CreateNetVarProperties`, `INetVarProperties`, `INVLObject`) from the IronPython scripts. First live use pending; the receiver tool reports the object manager's members if the factory call needs adjusting.
+
 ### Multi-device projects (**NEW**, v0.16.0)
 
 | Tool | Description |

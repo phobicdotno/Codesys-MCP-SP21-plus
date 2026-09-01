@@ -3370,6 +3370,107 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     }
   );
 
+  // ─── Network Variable Lists (NVL) via the Automation Platform API ─────
+  // The scripting API has no NVL support. These tools use the AP interfaces
+  // (GVLObject.dll IGVLObject2/INetVarProperties, NVLObject.dll INVLObject)
+  // from inside the IDE's IronPython, reflected from the SP21 P5 assemblies.
+
+  s.tool(
+    'set_nvl_sender',
+    "Turns an existing GVL into a Network Variable List SENDER (UDP) or updates its network properties: list identifier, task, cyclic interval, broadcast address, port, pack/checksum/acknowledge flags. Uses the IDE's Automation Platform API (no scripting-API equivalent exists). Saves the project. Multi-device projects: pass applicationPath or a full gvlPath ('Master/Plc Logic/Application/GVL_NvlTx').",
+    {
+      projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
+      gvlPath: z.string().describe("Path of the GVL to make a sender (e.g. 'Application/GVL_NvlTx' or 'Master/Plc Logic/Application/GVL_NvlTx')."),
+      listIdentifier: z.number().int().min(1).describe("NVL list identifier (COB-ID), unique per sender on the network."),
+      taskName: z.string().describe("Task that sends the list (e.g. 'MainTask')."),
+      port: z.number().int().optional().describe("UDP port. Default 1202."),
+      broadcastAddress: z.string().optional().describe("UDP broadcast address. Default '255.255.255.255'."),
+      interval: z.string().optional().describe("Cyclic transmission interval as IEC TIME literal. Default 'T#100ms'."),
+      minGap: z.string().optional().describe("Minimum gap for on-change transmission. Default 'T#20ms'."),
+      cyclic: z.boolean().optional().describe("Cyclic transmission. Default true."),
+      onChange: z.boolean().optional().describe("Transmit on change. Default false."),
+      packVariables: z.boolean().optional().describe("Pack variables. Default true."),
+      checksum: z.boolean().optional().describe("Transmit checksum. Default false."),
+      acknowledge: z.boolean().optional().describe("Acknowledgement. Default false."),
+    },
+    async (args: { projectFilePath: string; applicationPath?: string; gvlPath: string; listIdentifier: number; taskName: string; port?: number; broadcastAddress?: string; interval?: string; minGap?: string; cyclic?: boolean; onChange?: boolean; packVariables?: boolean; checksum?: boolean; acknowledge?: boolean }) => {
+      const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      const script = scriptManager.prepareScriptWithHelpers(
+        'set_nvl_sender',
+        {
+          PROJECT_FILE_PATH: escaped,
+          APPLICATION_PATH: appPathLiteral(args.applicationPath),
+          GVL_PATH: pyStringLiteral(sanitizePouPath(args.gvlPath)),
+          LIST_IDENTIFIER: String(args.listIdentifier),
+          TASK_NAME: pyStringLiteral(args.taskName),
+          PORT: String(args.port ?? 1202),
+          BROADCAST_ADDRESS: pyStringLiteral(args.broadcastAddress ?? '255.255.255.255'),
+          INTERVAL: pyStringLiteral(args.interval ?? 'T#100ms'),
+          MIN_GAP: pyStringLiteral(args.minGap ?? 'T#20ms'),
+          CYCLIC: pyBool(args.cyclic ?? true),
+          ON_CHANGE: pyBool(args.onChange ?? false),
+          PACK_VARIABLES: pyBool(args.packVariables ?? true),
+          CHECKSUM: pyBool(args.checksum ?? false),
+          ACKNOWLEDGE: pyBool(args.acknowledge ?? false),
+        },
+        ['ensure_project_open', 'select_application', 'find_object_by_path']
+      );
+      const result = await executor.executeScript(script, 120_000);
+      const success = result.success && result.output.includes('SCRIPT_SUCCESS');
+      if (!success) {
+        return formatToolResponse(result, '');
+      }
+      const a = result.output.indexOf('### NVL_SENDER_START ###');
+      const b = result.output.indexOf('### NVL_SENDER_END ###');
+      const summary = a !== -1 && b !== -1 && a < b ? result.output.substring(a + 24, b).trim() : '';
+      return { content: [{ type: 'text' as const, text: `NVL sender configured on '${args.gvlPath}' (list ${args.listIdentifier}, task ${args.taskName}). Project saved.${summary ? `\n${summary}` : ''}` }], isError: false };
+    }
+  );
+
+  s.tool(
+    'create_nvl_receiver',
+    "Adds a 'Network Variable List (Receiver)' object under an application (or updates an existing one with that name) and binds it to a sender GVL: sender, task, list identifier, UDP port/broadcast. Uses the Automation Platform API. Saves the project. If the object factory call is rejected on this CODESYS build, the error lists the object manager's members so the tool can be adjusted.",
+    {
+      projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
+      receiverName: z.string().describe("Name of the receiver object (e.g. 'NVL_Rx_Node1')."),
+      parentPath: z.string().describe("Where to create it (e.g. 'Master/Plc Logic/Application')."),
+      senderGvlPath: z.string().describe("Path of the sender GVL in this project (e.g. 'Slave/Plc Logic/Application/GVL_NvlTx')."),
+      taskName: z.string().describe("Task that receives the list (e.g. 'MainTask')."),
+      listIdentifier: z.number().int().min(1).describe("List identifier of the sender."),
+      port: z.number().int().optional().describe("UDP port. Default 1202."),
+      broadcastAddress: z.string().optional().describe("UDP broadcast address. Default '255.255.255.255'."),
+    },
+    async (args: { projectFilePath: string; applicationPath?: string; receiverName: string; parentPath: string; senderGvlPath: string; taskName: string; listIdentifier: number; port?: number; broadcastAddress?: string }) => {
+      const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      const script = scriptManager.prepareScriptWithHelpers(
+        'create_nvl_receiver',
+        {
+          PROJECT_FILE_PATH: escaped,
+          APPLICATION_PATH: appPathLiteral(args.applicationPath),
+          RECEIVER_NAME: pyStringLiteral(args.receiverName),
+          PARENT_PATH: pyStringLiteral(sanitizePouPath(args.parentPath)),
+          SENDER_GVL_PATH: pyStringLiteral(sanitizePouPath(args.senderGvlPath)),
+          TASK_NAME: pyStringLiteral(args.taskName),
+          LIST_IDENTIFIER: String(args.listIdentifier),
+          PORT: String(args.port ?? 1202),
+          BROADCAST_ADDRESS: pyStringLiteral(args.broadcastAddress ?? '255.255.255.255'),
+        },
+        ['ensure_project_open', 'select_application', 'find_object_by_path']
+      );
+      const result = await executor.executeScript(script, 120_000);
+      const success = result.success && result.output.includes('SCRIPT_SUCCESS');
+      if (!success) {
+        return formatToolResponse(result, '');
+      }
+      const a = result.output.indexOf('### NVL_RECEIVER_START ###');
+      const b = result.output.indexOf('### NVL_RECEIVER_END ###');
+      const summary = a !== -1 && b !== -1 && a < b ? result.output.substring(a + 26, b).trim() : '';
+      return { content: [{ type: 'text' as const, text: `NVL receiver '${args.receiverName}' under '${args.parentPath}' bound to '${args.senderGvlPath}' (list ${args.listIdentifier}, task ${args.taskName}). Project saved.${summary ? `\n${summary}` : ''}` }], isError: false };
+    }
+  );
+
   s.tool(
     'application_build',
     "Runs a build action on the active application: 'generate_code' (full code generation, what F11 does), 'rebuild' (clean + build), or 'clean' (remove compile info for this application). For a plain incremental build use compile_project. Check results with get_compile_messages.",
