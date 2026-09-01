@@ -3,6 +3,8 @@ import sys, scriptengine as script_engine, os, traceback
 try:
     print("DEBUG: check_online_change script: Project='%s'" % PROJECT_FILE_PATH)
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
 
     target_app = None
     try:

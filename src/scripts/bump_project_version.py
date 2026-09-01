@@ -273,27 +273,57 @@ def read_version_from_gvl(primary_project):
     return None
 
 
-def maintain_version_gvl(primary_project, version_str):
-    """Find or create the _MCP_PROJECT_VERSION GVL under the active
-    Application, and set its declaration so the running PLC carries the
-    project version as a constant string. Soft-fails on any error -- the
-    primary outcome of the bump (Project Information.Version) has already
-    succeeded by the time this is called, so a GVL creation failure is
-    logged as a WARNING but does not fail the whole tool."""
+def _all_applications(primary_project):
+    """Every application in the project - multi-device projects have one per
+    device. Falls back to the active application when the walk finds none."""
+    apps = []
     try:
-        app = getattr(primary_project, 'active_application', None)
-    except Exception:
-        app = None
-    if app is None:
+        for c in primary_project.get_children(True):
+            try:
+                if getattr(c, 'is_application', False):
+                    apps.append(c)
+            except Exception:
+                pass
+    except Exception as e:
+        print("WARNING: walking project for applications failed: %s" % e)
+    if not apps:
         try:
-            apps = primary_project.find('Application', True)
-            if apps:
-                app = apps[0]
+            app = getattr(primary_project, 'active_application', None)
+            if app is not None:
+                apps.append(app)
         except Exception:
             pass
-    if app is None:
-        print("WARNING: no active Application found -- cannot maintain %s GVL" % VERSION_GVL_NAME)
+    return apps
+
+
+def maintain_version_gvl(primary_project, version_str):
+    """Maintain the _MCP_PROJECT_VERSION GVL in EVERY application of the
+    project. The version is project-wide, and in a multi-device project each
+    PLC must carry it so read_running_version_online works against any of
+    them. Returns True only if every application succeeded."""
+    apps = _all_applications(primary_project)
+    if not apps:
+        print("WARNING: no Application found - cannot maintain %s GVL" % VERSION_GVL_NAME)
         return False
+    ok = True
+    for app in apps:
+        try:
+            label = app.get_name()
+        except Exception:
+            label = 'Application'
+        print("DEBUG: maintaining %s in application '%s'" % (VERSION_GVL_NAME, label))
+        if not _maintain_version_gvl_in_app(primary_project, app, version_str):
+            ok = False
+    return ok
+
+
+def _maintain_version_gvl_in_app(primary_project, app, version_str):
+    """Find or create the _MCP_PROJECT_VERSION GVL under ONE Application and
+    set its declaration so the running PLC carries the project version as a
+    constant string. Soft-fails on any error - the primary outcome of the
+    bump (Project Information.Version) has already succeeded by the time
+    this is called, so a GVL creation failure is logged as a WARNING but
+    does not fail the whole tool."""
 
     # Try to find existing GVL with this name (also the source of the previous
     # sDriveFile value, which the new declaration increments)
@@ -366,6 +396,8 @@ try:
         raise ValueError("level must be one of %s, got '%s'" % (', '.join(VALID_LEVELS), LEVEL))
 
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
 
     # Find the Project Information node via the official is_project_info
     # marker rather than name-matching. Walk the project tree -- the node is

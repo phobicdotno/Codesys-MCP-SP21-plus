@@ -266,6 +266,8 @@ def _render_messages_block(entries):
 try:
     print("DEBUG: get_compile_messages script: Project='%s'" % PROJECT_FILE_PATH)
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     project_name = os.path.basename(PROJECT_FILE_PATH)
     target_app = None
     app_name = "N/A"

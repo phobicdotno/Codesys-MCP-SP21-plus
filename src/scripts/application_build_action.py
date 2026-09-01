@@ -5,6 +5,8 @@ ACTION = "{ACTION}"
 try:
     print("DEBUG: application_build_action script: Action='%s', Project='%s'" % (ACTION, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     action = ACTION.lower().strip()
     if action not in ('generate_code', 'rebuild', 'clean'):
         raise ValueError("Invalid action '%s'. Must be 'generate_code', 'rebuild' or 'clean'." % ACTION)

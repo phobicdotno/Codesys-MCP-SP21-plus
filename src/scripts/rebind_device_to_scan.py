@@ -80,6 +80,8 @@ try:
     print("DEBUG: rebind_device_to_scan: Project='%s' name='%s' id='%s' addr='%s'" % (
         PROJECT_FILE_PATH, MATCH_NAME, MATCH_DEVICE_ID, MATCH_ADDRESS))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     target = find_target_device(primary_project)
     target_name = target.get_name() if hasattr(target, 'get_name') else ''
     cached_address = str(target.get_address())

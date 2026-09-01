@@ -1028,6 +1028,17 @@ function pyBool(b: boolean): string {
   return b ? 'True' : 'False';
 }
 
+/** Shared description for the optional applicationPath argument (multi-device projects). */
+const APP_PATH_DESC =
+  "Multi-device projects only: which application to act on, given as the full path ('Master/Plc Logic/Application'), " +
+  "the device name ('Master'), or a unique application name. It becomes the project's active application before the tool runs. " +
+  "Omit for single-device projects or to use the current active application. See list_applications.";
+
+/** Python literal for the APPLICATION_PATH placeholder of the select_application helper. */
+function appPathLiteral(applicationPath: string | undefined): string {
+  return pyStringLiteral((applicationPath ?? '').trim());
+}
+
 /** Format an IpcResult into an MCP tool response */
 function formatToolResponse(
   result: IpcResult,
@@ -1891,10 +1902,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
   // needs a build to actually land in the artifacts).
   const runCompile = async (
     escaped: string,
-    projectFilePath: string
+    projectFilePath: string,
+    applicationPath?: string
   ): Promise<{ message: string; isError: boolean }> => {
     const script = scriptManager.prepareScriptWithHelpers(
-      'compile_project', { PROJECT_FILE_PATH: escaped }, ['ensure_project_open']
+      'compile_project',
+      { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(applicationPath) },
+      ['ensure_project_open', 'select_application']
     );
     const result = await executor.executeScript(script, 120_000);
 
@@ -1970,13 +1984,14 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
 
   s.tool(
     'compile_project',
-    'Compiles (Builds) the primary application within a CODESYS project. Returns structured compiler messages (errors, warnings) when available.',
+    'Compiles (Builds) the active application within a CODESYS project (pass applicationPath to pick one in a multi-device project). Returns structured compiler messages (errors, warnings) when available.',
     {
       projectFilePath: z.string().describe("Path to the project file containing the application to compile."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
-      const { message, isError } = await runCompile(escaped, args.projectFilePath);
+      const { message, isError } = await runCompile(escaped, args.projectFilePath, args.applicationPath);
       return { content: [{ type: 'text' as const, text: message }], isError };
     }
   );
@@ -1986,11 +2001,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Retrieves the last compiler messages (errors, warnings) without triggering a new build. Useful after editing code to check remaining errors.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
-        'get_compile_messages', { PROJECT_FILE_PATH: escaped }, ['ensure_project_open']
+        'get_compile_messages', { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) }, ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
 
@@ -2448,11 +2464,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Connects (logs in) to the PLC runtime for the active application. Requires a configured device/gateway in the project. AGENT BEHAVIOUR REQUIRED: BEFORE calling this tool, the agent MUST announce in user-facing chat what it is about to do AND warn that a modal "Device User Login" dialog may pop in the CODESYS IDE (the agent cannot see or dismiss it). The user must be ready to click. Pass deviceUser+devicePassword (or set CODESYS_DEVICE_USER/CODESYS_DEVICE_PASSWORD env vars in the MCP server config) to pre-register credentials via ScriptOnline.set_default_credentials and skip the dialog entirely.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       loginWaitSeconds: z.number().int().min(0).max(600).optional().describe("Seconds to wait for the application state to stabilise after login() returns. Default: 10. Range 0-600. Keep this short -- if the user has to fill a dialog, they will do it within seconds, not minutes. Increase only when explicitly diagnosing a slow-login case."),
       deviceUser: z.string().optional().describe("Device user account name. Pre-registered via set_default_credentials so the modal Device User Login dialog is suppressed. Falls back to env var CODESYS_DEVICE_USER. If neither is set, the dialog will pop (current behaviour)."),
       devicePassword: z.string().optional().describe("Device user password. Same fallback chain as deviceUser via env CODESYS_DEVICE_PASSWORD."),
     },
-    async (args: { projectFilePath: string; loginWaitSeconds?: number; deviceUser?: string; devicePassword?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; loginWaitSeconds?: number; deviceUser?: string; devicePassword?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const waitSec = args.loginWaitSeconds ?? 10;
       const deviceUser = args.deviceUser ?? process.env.CODESYS_DEVICE_USER ?? '';
@@ -2460,12 +2477,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'connect_to_device',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           LOGIN_WAIT_SECONDS: String(waitSec),
           DEVICE_USER: pyStringLiteral(deviceUser),
           DEVICE_PASSWORD: pyStringLiteral(devicePassword),
         },
-        ['register_device_credentials', 'ensure_project_open', 'ensure_online_connection']
+        ['register_device_credentials', 'ensure_project_open', 'select_application', 'ensure_online_connection']
       );
       // Tool-side timeout = wait window + 30s headroom for actual login work
       const ipcTimeoutMs = (waitSec + 30) * 1000;
@@ -2479,12 +2496,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Disconnects (logs out) from the PLC runtime.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
-        'disconnect_from_device', { PROJECT_FILE_PATH: escaped },
-        ['ensure_project_open', 'ensure_online_connection']
+        'disconnect_from_device', { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
+        ['ensure_project_open', 'select_application', 'ensure_online_connection']
       );
       const result = await executor.executeScript(script);
       return formatToolResponse(result, `Disconnected from device for ${args.projectFilePath}.`);
@@ -2496,12 +2514,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Gets the current state of the PLC application (running, stopped, exception, etc.).',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
-        'get_application_state', { PROJECT_FILE_PATH: escaped },
-        ['ensure_project_open', 'ensure_online_connection']
+        'get_application_state', { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
+        ['ensure_project_open', 'select_application', 'ensure_online_connection']
       );
       const result = await executor.executeScript(script);
 
@@ -2533,17 +2552,18 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Reads the current value of a variable from the running PLC application. Must be connected first.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       variablePath: z.string().describe("Variable path (e.g., 'PLC_PRG.bMotorRunning', 'GVL.nCounter')."),
     },
-    async (args: { projectFilePath: string; variablePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; variablePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'read_variable',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           VARIABLE_PATH: args.variablePath.trim(),
         },
-        ['ensure_project_open', 'ensure_online_connection']
+        ['ensure_project_open', 'select_application', 'ensure_online_connection']
       );
       const result = await executor.executeScript(script);
 
@@ -2568,19 +2588,20 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Writes a value to a variable in the running PLC application. Must be connected first.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       variablePath: z.string().describe("Variable path (e.g., 'PLC_PRG.bMotorRunning')."),
       value: z.string().describe("Value to write (e.g., 'TRUE', '42', '3.14')."),
     },
-    async (args: { projectFilePath: string; variablePath: string; value: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; variablePath: string; value: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'write_variable',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           VARIABLE_PATH: args.variablePath.trim(),
           VARIABLE_VALUE: args.value,
         },
-        ['ensure_project_open', 'ensure_online_connection']
+        ['ensure_project_open', 'select_application', 'ensure_online_connection']
       );
       const result = await executor.executeScript(script);
       return formatToolResponse(
@@ -2603,20 +2624,21 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       : output.trim();
   };
 
-  const ONLINE_HELPERS = ['ensure_project_open', 'ensure_online_connection'];
+  const ONLINE_HELPERS = ['ensure_project_open', 'select_application', 'ensure_online_connection'];
 
   s.tool(
     'reset_application',
     "Resets the online application. 'warm' keeps retain variables, 'cold' clears retains but keeps persistents, 'origin' (ResetOption.Original) erases all variables AND the application from the device — destructive, ask the user before using 'origin'. Clears all breakpoints. Must be connected first (connect_to_device).",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       level: z.enum(['warm', 'cold', 'origin']).describe("Reset level: warm (keep retains), cold (clear retains), origin (erase application from device)."),
     },
-    async (args: { projectFilePath: string; level: 'warm' | 'cold' | 'origin' }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; level: 'warm' | 'cold' | 'origin' }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'reset_application',
-        { PROJECT_FILE_PATH: escaped, RESET_LEVEL: args.level },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), RESET_LEVEL: args.level },
         ONLINE_HELPERS
       );
       const result = await executor.executeScript(script, 120_000);
@@ -2629,14 +2651,15 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Reads the current values of MULTIPLE variables from the running PLC application in one call (online_app.read_values). Much cheaper than repeated read_variable calls. Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       expressions: z.array(z.string()).min(1).describe("Variable expressions, e.g. ['PLC_PRG.bRun', 'GVL.nCounter']."),
     },
-    async (args: { projectFilePath: string; expressions: string[] }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; expressions: string[] }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'read_variables',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           EXPRESSIONS_PY: '[' + args.expressions.map((e) => pyStringLiteral(e.trim())).join(', ') + ']',
         },
         ONLINE_HELPERS
@@ -2656,19 +2679,20 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Writes MULTIPLE variables to the running PLC application in one batch (set_prepared_value xN + one write_prepared_values commit, so all values land in the same cycle). Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       assignments: z.array(z.object({
         expression: z.string().describe("Variable expression, e.g. 'PLC_PRG.bRun'."),
         value: z.string().describe("Value to write, e.g. 'TRUE', '42', '3.14'."),
       })).min(1).describe("Expression/value pairs to write as one batch."),
     },
-    async (args: { projectFilePath: string; assignments: Array<{ expression: string; value: string }> }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; assignments: Array<{ expression: string; value: string }> }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const assignmentsPy = '[' + args.assignments
         .map((a) => `(${pyStringLiteral(a.expression.trim())}, ${pyStringLiteral(a.value)})`)
         .join(', ') + ']';
       const script = scriptManager.prepareScriptWithHelpers(
         'write_variables',
-        { PROJECT_FILE_PATH: escaped, ASSIGNMENTS_PY: assignmentsPy },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), ASSIGNMENTS_PY: assignmentsPy },
         ONLINE_HELPERS
       );
       const result = await executor.executeScript(script);
@@ -2681,19 +2705,20 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "FORCES variables in the running PLC application (set_prepared_value xN + force_prepared_values): the values are pinned against task writes until unforced (unforce_variables). Forces survive until unforce or application reset. Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       assignments: z.array(z.object({
         expression: z.string().describe("Variable expression, e.g. 'PLC_PRG.bOverride'."),
         value: z.string().describe("Value to force, e.g. 'TRUE', '42'."),
       })).min(1).describe("Expression/value pairs to force."),
     },
-    async (args: { projectFilePath: string; assignments: Array<{ expression: string; value: string }> }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; assignments: Array<{ expression: string; value: string }> }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const assignmentsPy = '[' + args.assignments
         .map((a) => `(${pyStringLiteral(a.expression.trim())}, ${pyStringLiteral(a.value)})`)
         .join(', ') + ']';
       const script = scriptManager.prepareScriptWithHelpers(
         'force_variables',
-        { PROJECT_FILE_PATH: escaped, ASSIGNMENTS_PY: assignmentsPy },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), ASSIGNMENTS_PY: assignmentsPy },
         ONLINE_HELPERS
       );
       const result = await executor.executeScript(script);
@@ -2706,15 +2731,16 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Removes forces from variables in the running PLC application. Omit 'expressions' to unforce ALL forced values (unforce_all_values). With 'expressions', stages set_unforce_value per expression and commits via force_prepared_values. Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       expressions: z.array(z.string()).optional().describe("Expressions to unforce. Omit to unforce ALL."),
       restore: z.boolean().optional().describe("If true, restore the value from before forcing (only with explicit expressions). Default false."),
     },
-    async (args: { projectFilePath: string; expressions?: string[]; restore?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; expressions?: string[]; restore?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'unforce_variables',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           EXPRESSIONS_PY: '[' + (args.expressions ?? []).map((e) => pyStringLiteral(e.trim())).join(', ') + ']',
           RESTORE: pyBool(args.restore ?? false),
         },
@@ -2735,12 +2761,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Lists all currently FORCED expressions (and staged/prepared expressions) on the online application, including ones forced by other clients/editors. Read-only. Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'list_forced_variables',
-        { PROJECT_FILE_PATH: escaped },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
         ONLINE_HELPERS
       );
       const result = await executor.executeScript(script);
@@ -2759,10 +2786,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Creates a boot application. online=true: creates it directly ON the connected device (survives reboot). online=false (default): writes an offline .app boot file (outputPath, or '<application>.app' next to the project) — requires the project to be compiled first (compile_project).",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       online: z.boolean().optional().describe("true = create on the connected device; false/omitted = write offline .app file."),
       outputPath: z.string().optional().describe("Offline only: where to write the .app file. Relative paths resolve against the project directory. Omit for '<application>.app' next to the project."),
     },
-    async (args: { projectFilePath: string; online?: boolean; outputPath?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; online?: boolean; outputPath?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const outPath = args.outputPath ?? '';
       const uncErr = outPath ? uncPathError(outPath) : null;
@@ -2772,7 +2800,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'create_boot_application',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           ONLINE_MODE: pyBool(args.online ?? false),
           OUTPUT_PATH: outPath,
         },
@@ -2793,13 +2821,14 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Downloads the project SOURCE archive onto the connected PLC (online_device.download_source), so the source can later be recovered from the device. compact=true stores only the current device's PLC + applications. Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       compact: z.boolean().optional().describe("true = only the current device's PLC and applications; false/omitted = all PLCs and applications in the project."),
     },
-    async (args: { projectFilePath: string; compact?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; compact?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'source_download',
-        { PROJECT_FILE_PATH: escaped, COMPACT: pyBool(args.compact ?? false) },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), COMPACT: pyBool(args.compact ?? false) },
         ONLINE_HELPERS
       );
       const result = await executor.executeScript(script, 300_000);
@@ -2812,9 +2841,10 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Uploads the SOURCE archive stored on the connected PLC and saves it locally as a project archive (usually .prj). Must be connected first; the device must contain a source download (see source_download).",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       archivePath: z.string().describe("Local path to save the uploaded project archive to (e.g. 'C:/temp/uploaded.prj')."),
     },
-    async (args: { projectFilePath: string; archivePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; archivePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const escArchive = resolvePath(args.archivePath, workspaceDir);
       const uncErr = uncPathError(escArchive);
@@ -2823,7 +2853,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       }
       const script = scriptManager.prepareScriptWithHelpers(
         'source_upload',
-        { PROJECT_FILE_PATH: escaped, ARCHIVE_PATH: escArchive },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), ARCHIVE_PATH: escArchive },
         ONLINE_HELPERS
       );
       const result = await executor.executeScript(script, 300_000);
@@ -2836,13 +2866,14 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Lists files and directories in a directory on the connected PLC's filesystem (get_file_list_of_directory). Returns kind/name/size/mtime rows. Read-only. Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       plcDirectory: z.string().optional().describe("Remote directory on the PLC (e.g. 'PlcLogic'). Omit/empty for the PLC's root file area."),
     },
-    async (args: { projectFilePath: string; plcDirectory?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; plcDirectory?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'plc_file_list',
-        { PROJECT_FILE_PATH: escaped, PLC_DIRECTORY: pyStringLiteral(args.plcDirectory ?? '') },
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), PLC_DIRECTORY: pyStringLiteral(args.plcDirectory ?? '') },
         ONLINE_HELPERS
       );
       const result = await executor.executeScript(script, 60_000);
@@ -2861,12 +2892,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Transfers a single file between the local machine and the connected PLC's filesystem. direction 'to_plc' copies localPath onto the PLC (CODESYS download_file); 'from_plc' copies plcPath to the local machine (upload_file). Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       direction: z.enum(['to_plc', 'from_plc']).describe("'to_plc' = local file onto PLC; 'from_plc' = PLC file to local machine."),
       localPath: z.string().describe("Local file path (source for to_plc, destination for from_plc)."),
       plcPath: z.string().describe("Remote path on the PLC (destination for to_plc, source for from_plc)."),
       forceOverwrite: z.boolean().optional().describe("Overwrite the destination if it already exists. Default false."),
     },
-    async (args: { projectFilePath: string; direction: 'to_plc' | 'from_plc'; localPath: string; plcPath: string; forceOverwrite?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; direction: 'to_plc' | 'from_plc'; localPath: string; plcPath: string; forceOverwrite?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const escLocal = resolvePath(args.localPath, workspaceDir);
       const uncErr = uncPathError(escLocal);
@@ -2876,7 +2908,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'plc_file_transfer',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           DIRECTION: args.direction,
           LOCAL_PATH: escLocal,
           PLC_PATH: pyStringLiteral(args.plcPath),
@@ -2899,16 +2931,17 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Deletes a file (or directory) on the connected PLC's filesystem. DESTRUCTIVE — confirm with the user before deleting anything you did not create. Must be connected first.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       plcPath: z.string().describe("Remote path on the PLC to delete."),
       isDirectory: z.boolean().optional().describe("true if plcPath is a directory. Default false (file)."),
       recursive: z.boolean().optional().describe("Directories only: delete recursively. Default false."),
     },
-    async (args: { projectFilePath: string; plcPath: string; isDirectory?: boolean; recursive?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; plcPath: string; isDirectory?: boolean; recursive?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'plc_file_delete',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           PLC_PATH: pyStringLiteral(args.plcPath),
           IS_DIRECTORY: pyBool(args.isDirectory ?? false),
           RECURSIVE: pyBool(args.recursive ?? false),
@@ -3253,19 +3286,96 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
   // ─── Application Build & Object Tools (SP21 coverage phase 3) ────────
   // API: SP21 ScriptApplication.pyi / ScriptObject.pyi.
 
+  // ─── Multi-device projects: application selection ────────────────────
+  // CODESYS has ONE active application per project; build/online/version
+  // tools act on it. These tools make the choice explicit in projects with
+  // several devices (e.g. a master and a slave PLC in one .project).
+
+  s.tool(
+    'list_applications',
+    "Lists every application in the project (one per device in multi-device projects) with its hosting device, full path and whether it is the ACTIVE application. Read-only. Use the 'path' (or device name) with set_active_application or the applicationPath argument of build/online/version tools.",
+    {
+      projectFilePath: z.string().describe("Path to the project file."),
+    },
+    async (args: { projectFilePath: string }) => {
+      const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      const script = scriptManager.prepareScriptWithHelpers(
+        'list_applications',
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral('') },
+        ['ensure_project_open', 'select_application']
+      );
+      const result = await executor.executeScript(script);
+      const success = result.success && result.output.includes('SCRIPT_SUCCESS');
+      if (!success) {
+        return formatToolResponse(result, '');
+      }
+      const startMarker = '### APPLICATIONS_START ###';
+      const endMarker = '### APPLICATIONS_END ###';
+      const a = result.output.indexOf(startMarker);
+      const b = result.output.indexOf(endMarker);
+      let apps: Array<{ name: string; path: string; device: string; device_type: string; is_active: boolean }> = [];
+      if (a !== -1 && b !== -1 && a < b) {
+        try {
+          apps = JSON.parse(result.output.substring(a + startMarker.length, b).trim());
+        } catch {
+          // fall through to raw output
+        }
+      }
+      if (apps.length === 0) {
+        return { content: [{ type: 'text' as const, text: `No applications found in ${args.projectFilePath}.` }], isError: false };
+      }
+      const lines = apps.map((x) =>
+        `- ${x.path}${x.is_active ? '  (ACTIVE)' : ''}` +
+        `${x.device ? `  device='${x.device}'` : ''}${x.device_type ? ` [${x.device_type}]` : ''}`
+      );
+      return {
+        content: [{ type: 'text' as const, text: `${apps.length} application(s) in ${args.projectFilePath}:\n${lines.join('\n')}` }],
+        isError: false,
+      };
+    }
+  );
+
+  s.tool(
+    'set_active_application',
+    "Makes one application the project's ACTIVE application (project.active_application) and saves the project, so every following build/online/version tool acts on it. Only needed in multi-device projects. Accepts the full path ('Master/Plc Logic/Application'), the device name ('Master') or a unique application name; use list_applications to see the candidates. Alternatively pass applicationPath directly to the individual tools.",
+    {
+      projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().describe("Application to activate: full path, device name, or unique application name."),
+    },
+    async (args: { projectFilePath: string; applicationPath: string }) => {
+      const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      const script = scriptManager.prepareScriptWithHelpers(
+        'set_active_application',
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
+        ['ensure_project_open', 'select_application']
+      );
+      const result = await executor.executeScript(script);
+      const success = result.success && result.output.includes('SCRIPT_SUCCESS');
+      if (!success) {
+        return formatToolResponse(result, '');
+      }
+      const m = result.output.match(/Active application:\s*(.+)/);
+      return {
+        content: [{ type: 'text' as const, text: `Active application: ${m ? m[1].trim() : args.applicationPath}. Project saved.` }],
+        isError: false,
+      };
+    }
+  );
+
   s.tool(
     'application_build',
     "Runs a build action on the active application: 'generate_code' (full code generation, what F11 does), 'rebuild' (clean + build), or 'clean' (remove compile info for this application). For a plain incremental build use compile_project. Check results with get_compile_messages.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       action: z.enum(['generate_code', 'rebuild', 'clean']).describe("Build action to run."),
     },
-    async (args: { projectFilePath: string; action: 'generate_code' | 'rebuild' | 'clean' }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; action: 'generate_code' | 'rebuild' | 'clean' }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'application_build_action',
-        { PROJECT_FILE_PATH: escaped, ACTION: args.action },
-        ['ensure_project_open']
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath), ACTION: args.action },
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script, 300_000);
       return formatToolResponse(result, `${args.action} executed. Use get_compile_messages for details.`);
@@ -3277,13 +3387,14 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Checks whether an ONLINE CHANGE is currently possible for the active application (app.is_online_change_possible) — i.e. whether download_to_device would do an online change instead of a full download. Read-only.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'check_online_change',
-        { PROJECT_FILE_PATH: escaped },
-        ['ensure_project_open']
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
       const success = result.success && result.output.includes('SCRIPT_SUCCESS');
@@ -3873,13 +3984,14 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Pre-flight check for download/connect: scans the gateway and reports whether the project's cached device address actually matches a live target. Returns reachable=true if the cached address is in the scan results, false otherwise (with the full candidate list so the caller can rebind). The download_to_device tool runs this automatically; you only need to call it directly when you want to know the state without committing to a download.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'verify_device_reachable',
-        { PROJECT_FILE_PATH: escaped },
-        ['ensure_project_open', 'find_target_device']
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
+        ['ensure_project_open', 'select_application', 'find_target_device']
       );
       const result = await executor.executeScript(script, 60_000);
       const success = result.success && result.output.includes('SCRIPT_SUCCESS');
@@ -3896,21 +4008,22 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Re-bind the project's configured device to a fresh scan result (typically same PLC, new gateway address after reboot/DHCP). Match priority: (1) matchName (exact, case-insensitive); (2) matchDeviceId; (3) matchAddress (forced, no scan); (4) single scan candidate. If multiple ambiguous matches exist, refuses and returns the candidate list. On success, calls device.set_gateway_and_address() and saves the project.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       matchName: z.string().optional().describe("Match by device_name from the scan (exact, case-insensitive). E.g. 'codesys-pi'."),
       matchDeviceId: z.string().optional().describe("Match by device_id from the scan."),
       matchAddress: z.string().optional().describe("Force a specific address. Either a router address (e.g. '0301.3053') or an IP-form address 'ip[:port]' (e.g. '127.0.0.1:11740' for an SSH-tunnelled PLC) -- IP form binds via set_gateway_and_ip_address, no UDP discovery needed. Skips the scan step entirely."),
     },
-    async (args: { projectFilePath: string; matchName?: string; matchDeviceId?: string; matchAddress?: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; matchName?: string; matchDeviceId?: string; matchAddress?: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'rebind_device_to_scan',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           MATCH_NAME: args.matchName ?? '',
           MATCH_DEVICE_ID: args.matchDeviceId ?? '',
           MATCH_ADDRESS: args.matchAddress ?? '',
         },
-        ['ensure_project_open', 'find_target_device']
+        ['ensure_project_open', 'select_application', 'find_target_device']
       );
       const result = await executor.executeScript(script, 60_000);
       const success = result.success && result.output.includes('SCRIPT_SUCCESS');
@@ -4002,12 +4115,13 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Downloads the compiled application to the PLC device. Attempts online change first, falls back to full download. PRE-FLIGHT: this tool automatically runs verify_device_reachable BEFORE attempting login(), and refuses to proceed if the cached device address is not in the live scan results -- the user must rebind (call rebind_device_to_scan_result) or set skipReachabilityCheck=true to force. AGENT BEHAVIOUR REQUIRED: BEFORE calling this tool, the agent MUST announce in user-facing chat what it is about to do AND warn that a modal "Device User Login" dialog may pop in the CODESYS IDE (the agent cannot see or dismiss it). The user must be ready to click. Same credential-injection support as connect_to_device: pass deviceUser+devicePassword (or set CODESYS_DEVICE_USER/CODESYS_DEVICE_PASSWORD env vars on the MCP) to suppress the dialog that the IDE otherwise pops on every download.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       loginWaitSeconds: z.number().int().min(0).max(600).optional().describe("Seconds to wait for application state to stabilise after login() returns. Default: 10. Range 0-600. Keep this short -- a dialog gets clicked in seconds, not minutes."),
       deviceUser: z.string().optional().describe("Device user account. Pre-registered via set_default_credentials so the modal Device User Login dialog is suppressed. Falls back to env CODESYS_DEVICE_USER."),
       devicePassword: z.string().optional().describe("Device user password. Falls back to env CODESYS_DEVICE_PASSWORD."),
       skipReachabilityCheck: z.boolean().optional().describe("If true, skip the verify_device_reachable pre-flight and go straight to login()/download(). Only use when the gateway/cache lookup is itself broken (e.g. CODESYS doesn't expose the gateway list on this SP). Default false."),
     },
-    async (args: {
+    async (args: { applicationPath?: string;
       projectFilePath: string;
       loginWaitSeconds?: number;
       deviceUser?: string;
@@ -4026,8 +4140,8 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       if (!args.skipReachabilityCheck) {
         const verifyScript = scriptManager.prepareScriptWithHelpers(
           'verify_device_reachable',
-          { PROJECT_FILE_PATH: escaped },
-          ['ensure_project_open', 'find_target_device']
+          { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
+          ['ensure_project_open', 'select_application', 'find_target_device']
         );
         const verifyResult = await executor.executeScript(verifyScript, 60_000);
         const verifySuccess = verifyResult.success && verifyResult.output.includes('SCRIPT_SUCCESS');
@@ -4065,12 +4179,12 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'download_to_device',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           LOGIN_WAIT_SECONDS: String(waitSec),
           DEVICE_USER: pyStringLiteral(deviceUser),
           DEVICE_PASSWORD: pyStringLiteral(devicePassword),
         },
-        ['register_device_credentials', 'ensure_project_open', 'ensure_online_connection']
+        ['register_device_credentials', 'ensure_project_open', 'select_application', 'ensure_online_connection']
       );
       // Tool-side timeout = wait window + 120s headroom for the actual download
       const ipcTimeoutMs = (waitSec + 120) * 1000;
@@ -4084,17 +4198,18 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     'Starts or stops the PLC application on the connected device.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       action: z.string().describe("Action to perform: 'start' or 'stop'."),
     },
-    async (args: { projectFilePath: string; action: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; action: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'start_stop_application',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           APP_ACTION: args.action.trim(),
         },
-        ['ensure_project_open', 'ensure_online_connection']
+        ['ensure_project_open', 'select_application', 'ensure_online_connection']
       );
       const result = await executor.executeScript(script);
       return formatToolResponse(
@@ -4684,10 +4799,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Bumps one part of the 4-part Project Information.Version field of the primary project (Major.Minor.Revision.Build) and saves the project. Also maintains a `_MCP_PROJECT_VERSION` GVL under Application with the new version as `sVersion : STRING := '<X.Y.Z.W>'` so the running PLC carries the version at a known address (read it via the read_running_version_online tool). The GVL is created on first bump and updated in place thereafter. Convention: major = incompatible API break (rename FB / change public signature / remove method); minor = backward-compatible feature add (new FB / GVL / method); revision = bug fix only; build = internal counter, often 0 for hand-released versions. Bumping a higher part resets all lower parts to 0. FIRST-RUN: if no version is set yet (None/empty/0.0.0.0), seeds at 1.0.0.0 regardless of level so a first-time bump gives a canonical starting point instead of 0.0.0.1. AUTO MODE: if level='auto', the tool diffs the project's mcp-mirror/ folder against the latest v* git tag and classifies the change (deletion/rename -> major; addition -> minor; modification -> revision; no changes -> short-circuits with no bump; first-run -> seed at 1.0.0.0).",
     {
       projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
       level: z.enum(['major', 'minor', 'revision', 'build', 'auto']).describe("Which part of the 4-part version to bump. Major = incompatible API break. Minor = backward-compatible feature add. Revision = bug fix only. Build = internal / CI counter. AUTO classifies via git diff of mcp-mirror/ against the latest v* tag."),
       allowVersionUpgrade: z.boolean().optional().describe("Override the CODESYS version-pin guard. The guard refuses to save when this server's install differs from the project's pinned version (.codesys-version, else library.md's 'CODESYS Development System' row), because saving converts the project. Only set true when the conversion is deliberate."),
     },
-    async (args: { projectFilePath: string; level: 'major' | 'minor' | 'revision' | 'build' | 'auto'; allowVersionUpgrade?: boolean }) => {
+    async (args: { applicationPath?: string; projectFilePath: string; level: 'major' | 'minor' | 'revision' | 'build' | 'auto'; allowVersionUpgrade?: boolean }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       // This tool saves the .project -- guard before anything else.
       const pinCheck = enforceVersionPin(escaped, {
@@ -4724,11 +4840,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         const script = scriptManager.prepareScriptWithHelpers(
           'bump_project_version',
           {
-            PROJECT_FILE_PATH: escaped,
+            PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
             LEVEL: resolvedLevel,
             SEED_VERSION: seedVersionFromLatestTag(projectDir, resolvedLevel),
           },
-          ['ensure_project_open']
+          ['ensure_project_open', 'select_application']
         );
         const result = await executor.executeScript(script);
 
@@ -4753,11 +4869,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const script = scriptManager.prepareScriptWithHelpers(
         'bump_project_version',
         {
-          PROJECT_FILE_PATH: escaped,
+          PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath),
           LEVEL: args.level,
           SEED_VERSION: seedVersionFromLatestTag(path.dirname(escaped), args.level),
         },
-        ['ensure_project_open']
+        ['ensure_project_open', 'select_application']
       );
       const result = await executor.executeScript(script);
 
@@ -5145,13 +5261,14 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     "Reads the running project's version from a connected PLC over the CODESYS online protocol (port 11740 / gateway). Returns the value of `_MCP_PROJECT_VERSION.sVersion` -- the runtime anchor that bump_project_version maintains automatically. Use this to confirm what version the live PLC is actually running, independently of whatever's in the .project file or the mcp-mirror/. Provides actionable error messages when the GVL is missing (project never bumped) or the boot application is stale (downloaded before the last bump). Implementation: ensure_project_open + ensure_online_connection + read_value('_MCP_PROJECT_VERSION.sVersion').",
     {
       projectFilePath: z.string().describe("Path to the project file. The tool opens it if not already primary, connects to its configured device, and reads the version anchor."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
     },
-    async (args: { projectFilePath: string }) => {
+    async (args: { applicationPath?: string; projectFilePath: string }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       const script = scriptManager.prepareScriptWithHelpers(
         'read_running_version_online',
-        { PROJECT_FILE_PATH: escaped },
-        ['ensure_project_open', 'ensure_online_connection']
+        { PROJECT_FILE_PATH: escaped, APPLICATION_PATH: appPathLiteral(args.applicationPath) },
+        ['ensure_project_open', 'select_application', 'ensure_online_connection']
       );
       const result = await executor.executeScript(script);
       // Pull the version out of the script's RUNNING_VERSION line

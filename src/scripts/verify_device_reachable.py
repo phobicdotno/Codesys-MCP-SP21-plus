@@ -50,6 +50,8 @@ def _describe(t):
 try:
     print("DEBUG: verify_device_reachable: Project='%s'" % PROJECT_FILE_PATH)
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
     target = find_target_device(primary_project)
     cached_address = str(target.get_address())
     target_name = target.get_name() if hasattr(target, 'get_name') else ''

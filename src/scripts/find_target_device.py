@@ -49,8 +49,35 @@ def find_all_target_devices(primary_project):
     return out
 
 
+def _device_hosting_active_application(primary_project, devices):
+    """In a multi-device project, the routed device whose subtree holds the
+    project's active application (or None if it cannot be determined)."""
+    try:
+        node = primary_project.active_application
+    except Exception:
+        return None
+    guard = 0
+    try:
+        while node is not None and guard < 32 and not hasattr(node, 'active_application'):
+            guard += 1
+            if _is_device(node):
+                for d in devices:
+                    try:
+                        if str(d.guid) == str(node.guid):
+                            return d
+                    except Exception:
+                        pass
+                return None
+            node = node.parent
+    except Exception:
+        return None
+    return None
+
+
 def find_target_device(primary_project):
-    """Return the first device with a configured route, or raise."""
+    """Return the routed device to talk to, or raise. With one routed device
+    that is it; with several (multi-device project) the device hosting the
+    active application wins, falling back to the first routed device."""
     devices = find_all_target_devices(primary_project)
     if not devices:
         raise RuntimeError(
@@ -58,6 +85,15 @@ def find_target_device(primary_project):
             "Open the device's Communication Settings in the IDE and set "
             "Gateway + Device Address before retrying."
         )
+    if len(devices) > 1:
+        preferred = _device_hosting_active_application(primary_project, devices)
+        if preferred is not None:
+            try:
+                print("DEBUG: find_target_device: %d routed devices; using '%s' (hosts the active application)" % (len(devices), preferred.get_name()))
+            except Exception:
+                pass
+            return preferred
+        print("DEBUG: find_target_device: %d routed devices; active application's device not resolved - using the first" % len(devices))
     return devices[0]
 
 

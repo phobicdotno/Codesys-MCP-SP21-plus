@@ -173,6 +173,7 @@ After that, watch VSCode's Source Control panel as Claude edits — every tool c
 - **`bump_project_version`** — bumps one part of the 4-part `Project Information.Version` (major / minor / revision / build / **auto**) and maintains a `_MCP_PROJECT_VERSION` GVL inside the project so the running PLC carries its source version. `auto` mode classifies via mirror diff vs the latest `v*` git tag (deletion/rename → major; addition → minor; modification → revision; first-run → seed at 1.0.0.0). Auto-maintains `Changelog.md` alongside the bump.
 - **`release_project_version`** — one-shot release pipeline: `mirror_export` → classify → `bump_project_version` → regenerate library.md/pou-dump.md/README.md/Changelog.md → `git add` controlled paths → `git commit` → `git tag v<new>` → `git push --follow-tags`. Tag annotation embeds dual SHAs (project-sha256 + mirror-sha256) so the binary-changed-without-source-diff case still gets a build-bump with provenance.
 - **`read_running_version_online`** — reads `_MCP_PROJECT_VERSION.sVersion` from the running PLC over the CODESYS online protocol (port 11740 / gateway). Returns the live value plus a sanity check against the X.Y.Z.W shape.
+- **Multi-device projects (v0.16.0)** - `list_applications` shows every application in a project with its device and which one is ACTIVE; `set_active_application` switches `project.active_application` and saves. Every application-scoped tool (compile, build, compile messages, online-change check, boot application, connect/disconnect, download, start/stop, reset, state, read/write/force variables, PLC file ops, source up/download, running version, reachability check, rebind, bump) takes an optional `applicationPath` (full path, device name or unique application name) and activates it before acting. Device-side pre-flights pick the routed device that hosts the selected application, and `bump_project_version` now maintains `_MCP_PROJECT_VERSION` in EVERY application so each PLC of a master/slave project carries the project version.
 
 ### Reliability fixes
 
@@ -510,6 +511,15 @@ Requires SSH key auth + passwordless sudo for `/usr/bin/strings` on the PLC. If 
 | `move_object` | Move an object to a new parent in the tree |
 | `get_signature_crc` | Signature CRC of a POU (API-compatibility checks) |
 | `set_exclude_from_build` | Set/clear 'Exclude from build' on an object |
+
+### Multi-device projects (**NEW**, v0.16.0)
+
+| Tool | Description |
+|------|-------------|
+| `list_applications` | Every application in the project with hosting device, full path and ACTIVE flag |
+| `set_active_application` | Make one application the active one (`project.active_application`) and save |
+
+All application-scoped tools also accept `applicationPath` (e.g. `'Master/Plc Logic/Application'`, `'Master'`, or a unique application name) and activate it before acting. Omit it in single-device projects.
 
 ### Device Config & Task Config (**NEW**, phase 4)
 

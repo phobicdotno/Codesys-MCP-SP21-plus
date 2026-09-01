@@ -4,6 +4,8 @@ import traceback
 def ensure_online_connection(primary_project):
     """Get or create an online application connection for the active application."""
     print("DEBUG: Ensuring online connection...")
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
 
     target_app = None
     app_name = "N/A"
@@ -80,12 +82,12 @@ def ensure_online_connection(primary_project):
     # on a ScriptOnlineDevice created from the project's device object.
     # Without this, login() may pop dialogs the agent can't see or hang
     # while it waits for a session that nobody opened.
-    _ensure_device_connected(primary_project)
+    _ensure_device_connected(primary_project, target_app)
 
     return online_app, target_app
 
 
-def _ensure_device_connected(primary_project):
+def _ensure_device_connected(primary_project, target_app=None):
     """Locate the project's PLC device and open a shared online session
     on it if one isn't already open. Idempotent. Best-effort: any failure
     is logged but does NOT abort -- login() will surface its own error
@@ -101,6 +103,7 @@ def _ensure_device_connected(primary_project):
         # here -- ensure_online_connection.py is concatenated into scripts
         # that don't always import it). Keep selection criteria identical.
         target_device = None
+        routed = []
         try:
             for c in primary_project.get_children(True):
                 try:
@@ -117,11 +120,34 @@ def _ensure_device_connected(primary_project):
                     continue
                 if not addr or not str(addr).strip():
                     continue
-                target_device = c
-                break
+                routed.append(c)
         except Exception as e:
             print("DEBUG: ensure_device_connected: device walk failed: %s" % e)
             return
+        # Multi-device projects: prefer the routed device that hosts the
+        # target application. Single-device projects keep the historical
+        # 'first routed device' behaviour.
+        if len(routed) > 1 and target_app is not None:
+            try:
+                node = target_app
+                guard = 0
+                while node is not None and guard < 32 and not hasattr(node, 'active_application'):
+                    guard += 1
+                    if getattr(node, 'is_device', False):
+                        for d in routed:
+                            try:
+                                if str(d.guid) == str(node.guid):
+                                    target_device = d
+                            except Exception:
+                                pass
+                        break
+                    node = node.parent
+            except Exception as e:
+                print("DEBUG: ensure_device_connected: app->device walk failed: %s" % e)
+            if target_device is not None:
+                print("DEBUG: ensure_device_connected: %d routed devices; using the one hosting the target application" % len(routed))
+        if target_device is None and routed:
+            target_device = routed[0]
 
         if target_device is None:
             print("DEBUG: ensure_device_connected: no PLC device with route -- skipping")

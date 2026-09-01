@@ -7,6 +7,8 @@ try:
     print("DEBUG: create_boot_application script: online=%s, output='%s', Project='%s'" % (
         ONLINE_MODE, OUTPUT_PATH, PROJECT_FILE_PATH))
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
+    if 'apply_application_selection' in globals():
+        apply_application_selection(primary_project)
 
     if ONLINE_MODE:
         # Creates the boot application directly ON the connected device.
