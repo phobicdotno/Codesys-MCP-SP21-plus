@@ -140,7 +140,7 @@ def write_one(parent_dir, name, decl, impl, project_path):
     fpath = os.path.join(parent_dir, fname)
 
     lines = []
-    lines.append(u'(* === CODESYS export -- %s === *)' % kind)
+    lines.append(u'(* === CODESYS export - %s === *)' % kind)
     lines.append(u'(* Project path: %s *)' % project_path)
     # NOTE: deliberately NO 'Generated: <timestamp>' line. Including a
     # wall-clock time in the file content meant every mirror_export run
