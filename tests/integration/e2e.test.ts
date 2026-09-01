@@ -455,17 +455,20 @@ describe('E2E Script Preparation', () => {
     expect(trackingIdx).toBeGreaterThan(allSigsTrueIdx);
   });
 
-  it('set_symbol_access coerces int->SymbolAccess via type(maximal_access) before assigning', () => {
-    // Fix from PR #9: when `from scriptengine import SymbolAccess` returns
-    // a hollow class, _resolve_access falls back to a plain int and the
-    // C# setter rejects every non-zero int with "Cannot convert numeric
-    // value N to SymbolAccess. The value must be zero." The fix coerces
-    // the int through the enum class extracted from var.maximal_access
-    // BEFORE `var.configured_access = requested_access` runs.
+  it('set_symbol_access resolves the SymbolAccess member BY NAME on the real enum type before assigning', () => {
+    // History: `from scriptengine import SymbolAccess` returns a hollow
+    // class on some SPs, so _resolve_access falls back to a plain int.
+    // The C# setter then rejects the int ("Cannot convert numeric value 1
+    // to SymbolAccess. The value must be zero") - and on SP19 the member
+    // is called 'Read', not 'ReadOnly', with a value that is NOT 1, so
+    // enum_cls(int) could never work either. The fix looks the member up
+    // by NAME on type(var.maximal_access) (ReadOnly -> 'ReadOnly'/'Read',
+    // WriteOnly -> 'WriteOnly'/'Write') and only then falls back to
+    // System.Enum.ToObject - all BEFORE the assignment runs.
     const script = mgr.prepareScriptWithHelpers(
       'set_symbol_access',
       {
-        PROJECT_FILE_PATH: 'C:\\test.project',
+        PROJECT_FILE_PATH: 'C:\test.project',
         SIGNATURE_FQN: 'Application.PLC_PRG',
         VARIABLE_NAME: 'nCounter',
         ACCESS: 'ReadOnly',
@@ -474,38 +477,41 @@ describe('E2E Script Preparation', () => {
       },
       SYMCONF_HELPERS
     );
-    // Coercion block must reference type(max_access) and re-parse the int.
+    expect(script).toContain('def _coerce_access(');
+    expect(script).toContain("'readonly': ('ReadOnly', 'Read')");
+    expect(script).toContain("'writeonly': ('WriteOnly', 'Write')");
+    expect(script).toContain('System.Enum.ToObject(enum_cls, int_value)');
     expect(script).toContain('isinstance(requested_access, int)');
-    expect(script).toContain('type(max_access)');
-    expect(script).toContain('enum_cls(requested_access)');
+    expect(script).toContain('_coerce_access(requested_access, ACCESS, max_access)');
+    expect(script).not.toContain('enum_cls(requested_access)');
     // The coercion must come BEFORE the actual assignment.
-    const coerceIdx = script.indexOf('enum_cls(requested_access)');
+    const coerceIdx = script.indexOf('_coerce_access(requested_access, ACCESS, max_access)');
     const assignIdx = script.indexOf('var.configured_access = requested_access');
     expect(coerceIdx).toBeGreaterThan(0);
     expect(assignIdx).toBeGreaterThan(coerceIdx);
   });
 
-  it('set_signature_access_bulk coerces int->SymbolAccess lazily on the first variable', () => {
-    // Same root cause as set_symbol_access; fix is per-loop because
-    // requested_access is shared across all variables in a bulk run.
-    // The coercion uses type(v.maximal_access) on the first iteration
-    // and stays effective for the rest of the loop.
+  it('set_signature_access_bulk resolves the SymbolAccess member by name lazily on the first variable', () => {
+    // Same root cause and same helper as set_symbol_access; the lookup is
+    // per-loop because requested_access is shared across all variables in
+    // a bulk run and the sample enum value comes from v.maximal_access.
     const script = mgr.prepareScriptWithHelpers(
       'set_signature_access_bulk',
       {
-        PROJECT_FILE_PATH: 'C:\\test.project',
+        PROJECT_FILE_PATH: 'C:\test.project',
         SIGNATURE_FQN: 'Application.PLC_PRG',
         ACCESS: 'WriteOnly',
         LIBRARY_ID: '',
       },
       SYMCONF_HELPERS
     );
+    expect(script).toContain('def _coerce_access(');
     expect(script).toContain('isinstance(requested_access, int)');
-    expect(script).toContain('type(v.maximal_access)');
-    expect(script).toContain('enum_cls(requested_access)');
+    expect(script).toContain('_coerce_access(requested_access, ACCESS, v.maximal_access)');
+    expect(script).not.toContain('enum_cls(requested_access)');
     // Coercion must be inside the for-loop and BEFORE the assignment.
     const loopIdx = script.indexOf('for v in sig.variables');
-    const coerceIdx = script.indexOf('enum_cls(requested_access)');
+    const coerceIdx = script.indexOf('_coerce_access(requested_access, ACCESS, v.maximal_access)');
     const assignIdx = script.indexOf('v.configured_access = requested_access');
     expect(loopIdx).toBeGreaterThan(0);
     expect(coerceIdx).toBeGreaterThan(loopIdx);

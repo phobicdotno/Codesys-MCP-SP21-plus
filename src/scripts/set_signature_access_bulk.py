@@ -37,6 +37,49 @@ def _resolve_access(access_str):
         "Unknown access value '%s'. Allowed: None, ReadOnly, WriteOnly, ReadWrite" % access_str)
 
 
+# Member NAMES of the SymbolAccess enum differ between SPs ('Read' on SP19
+# where the docs say 'ReadOnly'), and the int VALUES are not the documented
+# 0/1/2/3 either: SP19 rejects 1 with "Cannot convert numeric value 1 to
+# SymbolAccess. The value must be zero" while 3 happens to be accepted.
+# So never hand the setter an int: look the member up BY NAME on the real
+# enum type (taken from a genuine value such as var.maximal_access), and
+# only then fall back to System.Enum.ToObject.
+_ACCESS_MEMBER_NAMES = {
+    'none': ('None', 'NoAccess'),
+    'readonly': ('ReadOnly', 'Read'),
+    'writeonly': ('WriteOnly', 'Write'),
+    'readwrite': ('ReadWrite',),
+}
+
+
+def _coerce_access(int_value, access_str, sample_enum_value):
+    """Turn the int fallback from _resolve_access into a genuine member of
+    the same .NET enum type as sample_enum_value."""
+    enum_cls = type(sample_enum_value)
+    wanted = _ACCESS_MEMBER_NAMES.get((access_str or '').strip().lower(), ())
+    try:
+        members = [m for m in dir(enum_cls) if not m.startswith('_')]
+    except Exception:
+        members = []
+    for name in wanted:
+        for m in members:
+            if m.lower() == name.lower():
+                try:
+                    value = getattr(enum_cls, m)
+                    print("DEBUG: access '%s' resolved by name on %s: %s" % (access_str, getattr(enum_cls, '__name__', enum_cls), m))
+                    return value
+                except Exception:
+                    continue
+    try:
+        import System
+        value = System.Enum.ToObject(enum_cls, int_value)
+        print("DEBUG: access resolved via System.Enum.ToObject(%s, %r): %r" % (getattr(enum_cls, '__name__', enum_cls), int_value, value))
+        return value
+    except Exception as e:
+        print("DEBUG: System.Enum.ToObject failed: %s" % e)
+    return int_value
+
+
 def _find_signature_in(collection, fqn, library_id=None):
     if collection is None:
         return None
@@ -123,10 +166,7 @@ try:
                 v_name = '?'
             if isinstance(requested_access, int):
                 try:
-                    enum_cls = type(v.maximal_access)
-                    requested_access = enum_cls(requested_access)
-                    print("DEBUG: int->enum coerced via type(v.maximal_access): %r"
-                          % requested_access)
+                    requested_access = _coerce_access(requested_access, ACCESS, v.maximal_access)
                 except Exception as e:
                     print("DEBUG: int->enum coercion failed: %s" % e)
             try:
