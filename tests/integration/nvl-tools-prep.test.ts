@@ -24,7 +24,8 @@ describe('E2E Script Preparation - NVL tools', () => {
     expect(script).toContain('CreateNetVarProperties');
     expect(script).toContain('nvp.ListIdentifier = str(LIST_IDENTIFIER)');
     expect(script).toContain('SetParameterValue');
-    expect(script).toContain('om.SetObject(handle, obj)');
+    expect(script).toContain('om.SetObject(mo, True, None)');
+    expect(script).toContain('SystemInstances.ObjectMgr');
     expect(script).toContain('def find_object_by_path_robust');
     expect(script).toContain('### NVL_SENDER_START ###');
     expect(script).toContain('SCRIPT_SUCCESS');
@@ -41,7 +42,7 @@ describe('E2E Script Preparation - NVL tools', () => {
     expect(script).toContain('RECEIVER_NAME = "NVL_Rx_Node1"');
     expect(script).toContain('recv.SenderGVLGuid = sender_guid');
     expect(script).toContain('recv.TaskName = TASK_NAME');
-    expect(script).toContain('NVL_TYPE_GUIDS');
+    expect(script).toContain('ObjectFactoryManager');
     expect(script).toContain('### NVL_RECEIVER_START ###');
     expect(script).toContain('SCRIPT_SUCCESS');
     expect(script).not.toMatch(/\{[A-Z_]+\}/);
