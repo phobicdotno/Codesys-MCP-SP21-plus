@@ -42,12 +42,8 @@ def _project_handle(primary_project, apenv):
         print("DEBUG: project handle via ScriptProject.handle = %s" % h)
         return h
     except Exception as e:
-        print("DEBUG: ScriptProject.handle unavailable (%s), trying APEnvironment.ProjectMgr" % e)
-    pm = apenv.ProjectMgr
-    proj = pm.PrimaryProject
-    h = proj.Handle
-    print("DEBUG: project handle via ProjectMgr.PrimaryProject.Handle = %s" % h)
-    return h
+        print("DEBUG: ScriptProject.handle unavailable (%s); engine members: %s" % (e, ', '.join(sorted(n for n in dir(apenv) if not n.startswith('_')))))
+        raise RuntimeError("No project handle available (ScriptProject.handle missing on this SP)")
 
 
 def _set_param(nvp, name, value):
@@ -87,12 +83,20 @@ try:
     print("DEBUG: GVL '%s' guid=%s" % (gvl.get_name(), gvl_guid))
 
     import clr
-    clr.AddReference('_3S.CoDeSys.Core')
-    from _3S.CoDeSys.Core import APEnvironment
-    handle = _project_handle(primary_project, APEnvironment)
-    om = APEnvironment.ObjectMgr
+    import System
+    for _name in ('SystemInstances', 'Objects', 'ObjectsWin'):
+        _found = None
+        for _asm in System.AppDomain.CurrentDomain.GetAssemblies():
+            if _asm.GetName().Name == _name:
+                _found = _asm
+                break
+        clr.AddReference(_found if _found is not None else _name)
+    from _3S.CoDeSys.Core import SystemInstances
+    handle = _project_handle(primary_project, SystemInstances)
+    om = SystemInstances.ObjectMgr
 
-    obj = om.GetObjectToModify(handle, gvl_guid)
+    mo = om.GetObjectToModify(handle, gvl_guid)
+    obj = mo.Object
     print("DEBUG: IObject type: %s" % obj.GetType().FullName)
 
     nvp = None
@@ -133,8 +137,48 @@ try:
     except Exception as e:
         print("DEBUG: CreateGuids failed: %s" % e)
 
-    om.SetObject(handle, obj)
+    # CreateNetVarProperties returns a DETACHED properties object on SP21 P5;
+    # attach it through the concrete class's writable member (found by
+    # reflection: the interface property is get-only).
+    try:
+        if obj.NetVarProperties is None:
+            from System.Reflection import BindingFlags
+            _t = obj.GetType()
+            _flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            _attached_via = None
+            for _pname in ('NetvarSettings', 'NetVarProperties'):
+                _pi = _t.GetProperty(_pname, _flags)
+                if _pi is not None and _pi.CanWrite:
+                    _pi.SetValue(obj, nvp, None)
+                    _attached_via = 'property ' + _pname
+                    break
+            if _attached_via is None:
+                for _fi in _t.GetFields(_flags):
+                    if 'netvar' in _fi.Name.lower():
+                        _fi.SetValue(obj, nvp)
+                        _attached_via = 'field ' + _fi.Name
+                        break
+            print("DEBUG: attach via %s" % _attached_via)
+    except Exception as e:
+        print("DEBUG: reflective attach failed: %s" % e)
+    try:
+        attached = obj.NetVarProperties
+        print("DEBUG: pre-commit NetVarProperties attached: %s (same as nvp: %s)" % (attached is not None, attached is nvp))
+    except Exception as e:
+        print("DEBUG: pre-commit NetVarProperties read failed: %s" % e)
+    om.SetObject(mo, True, None)
     print("DEBUG: SetObject committed")
+    mid = om.GetObjectToRead(handle, gvl_guid).Object
+    mid_nvp = None
+    try:
+        mid_nvp = mid.NetVarProperties
+    except Exception as e:
+        print("DEBUG: post-commit read failed: %s" % e)
+    print("DEBUG: post-commit NetVarProperties present: %s" % (mid_nvp is not None))
+    if mid_nvp is None:
+        ifaces = ', '.join(sorted(i.Name for i in obj.GetType().GetInterfaces() if 'GVL' in i.Name or 'NetVar' in i.Name))
+        print("DEBUG: obj interfaces: %s" % ifaces)
+        print("DEBUG: obj members with netvar: %s" % ', '.join(_names(obj, 'netvar')))
     try:
         primary_project.save()
         print("DEBUG: project saved")
@@ -142,10 +186,11 @@ try:
         print("WARN: project.save() raised %s" % e)
 
     # read back through a fresh read handle
-    check = om.GetObjectToRead(handle, gvl_guid)
+    check = om.GetObjectToRead(handle, gvl_guid).Object
     cnvp = check.NetVarProperties
     summary = {
         'gvl': GVL_PATH,
+        'persisted': cnvp is not None,
         'enabled': bool(getattr(cnvp, 'Enabled', False)),
         'protocol': str(getattr(cnvp, 'ProtocolName', '')),
         'list_identifier': str(getattr(cnvp, 'ListIdentifier', '')),
@@ -155,6 +200,8 @@ try:
         'broadcast_param': used_addr or '',
         'port_param': used_port or '',
     }
+    if cnvp is None:
+        raise RuntimeError("NetVarProperties did not persist (still None after commit) - see DEBUG lines above")
     print("### NVL_SENDER_START ###")
     print(json.dumps(summary))
     print("### NVL_SENDER_END ###")

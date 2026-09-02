@@ -33,10 +33,8 @@ def _project_handle(primary_project, apenv):
         print("DEBUG: project handle via ScriptProject.handle = %s" % h)
         return h
     except Exception as e:
-        print("DEBUG: ScriptProject.handle unavailable (%s), trying APEnvironment.ProjectMgr" % e)
-    h = apenv.ProjectMgr.PrimaryProject.Handle
-    print("DEBUG: project handle via ProjectMgr.PrimaryProject.Handle = %s" % h)
-    return h
+        print("DEBUG: ScriptProject.handle unavailable (%s); engine members: %s" % (e, ', '.join(sorted(n for n in dir(apenv) if not n.startswith('_')))))
+        raise RuntimeError("No project handle available (ScriptProject.handle missing on this SP)")
 
 
 def _find_existing(parent, name):
@@ -69,10 +67,16 @@ try:
 
     import clr
     import System
-    clr.AddReference('_3S.CoDeSys.Core')
-    from _3S.CoDeSys.Core import APEnvironment
-    handle = _project_handle(primary_project, APEnvironment)
-    om = APEnvironment.ObjectMgr
+    for _name in ('SystemInstances', 'Objects', 'ObjectsWin'):
+        _found = None
+        for _asm in System.AppDomain.CurrentDomain.GetAssemblies():
+            if _asm.GetName().Name == _name:
+                _found = _asm
+                break
+        clr.AddReference(_found if _found is not None else _name)
+    from _3S.CoDeSys.Core import SystemInstances
+    handle = _project_handle(primary_project, SystemInstances)
+    om = SystemInstances.ObjectMgr
 
     existing = _find_existing(parent, RECEIVER_NAME)
     created = False
@@ -80,57 +84,46 @@ try:
         print("DEBUG: receiver '%s' already exists (guid %s) - updating" % (RECEIVER_NAME, existing.guid))
         obj_guid = existing.guid
     else:
-        obj = None
-        errors = []
-        for type_guid in NVL_TYPE_GUIDS:
-            g = System.Guid(type_guid)
-            for desc, fn in [
-                ("CreateObject(typeGuid)", lambda: om.CreateObject(g)),
-                ("CreateObject(typeGuid, name)", lambda: om.CreateObject(g, RECEIVER_NAME)),
-                ("GetObjectFactory(typeGuid).Create()", lambda: om.GetObjectFactory(g).Create()),
-                ("GetObjectFactory(typeGuid).Create(name)", lambda: om.GetObjectFactory(g).Create(RECEIVER_NAME)),
-            ]:
-                try:
-                    obj = fn()
-                    if obj is not None:
-                        print("DEBUG: created NVL object via %s with type %s" % (desc, type_guid))
-                        break
-                except Exception as e:
-                    errors.append("%s [%s]: %s" % (desc, type_guid, e))
-            if obj is not None:
-                break
-        if obj is None:
-            raise RuntimeError("Could not create the NVL receiver object. Tried: %s. ObjectMgr members: %s" % (
-                ' | '.join(errors), ', '.join(_names(om))))
-        # name + add under the parent
-        try:
-            obj.MetaObject.Name = RECEIVER_NAME
-        except Exception as e:
-            print("DEBUG: setting MetaObject.Name failed: %s" % e)
-        added = False
-        add_errors = []
-        for desc, fn in [
-            ("AddObject(handle, parentGuid, obj, -1)", lambda: om.AddObject(handle, parent.guid, obj, -1)),
-            ("AddObject(handle, parentGuid, obj)", lambda: om.AddObject(handle, parent.guid, obj)),
-            ("AddObject(handle, parentGuid, name, obj, -1)", lambda: om.AddObject(handle, parent.guid, RECEIVER_NAME, obj, -1)),
-        ]:
+        fm = om.ObjectFactoryManager
+        factory = None
+        names = []
+        for f in fm.Factories:
             try:
-                fn()
-                added = True
-                print("DEBUG: added via %s" % desc)
+                nm = str(f.Name)
+                tn = f.ObjectType.FullName if f.ObjectType is not None else ''
+            except Exception:
+                continue
+            names.append(nm)
+            if 'NVLObject' in tn or 'Network Variable List' in nm:
+                factory = f
+                print("DEBUG: using factory '%s' (%s)" % (nm, tn))
                 break
-            except Exception as e:
-                add_errors.append("%s: %s" % (desc, e))
-        if not added:
-            raise RuntimeError("Could not add the NVL receiver under '%s'. Tried: %s. ObjectMgr members: %s" % (
-                PARENT_PATH, ' | '.join(add_errors), ', '.join(_names(om, 'add'))))
+        if factory is None:
+            raise RuntimeError("No NVL receiver factory found. Factories: %s" % ', '.join(sorted(set(names))))
+        new_iobj = None
+        try:
+            new_iobj = factory.Create()
+            print("DEBUG: factory.Create() ok: %s" % (new_iobj is not None))
+        except Exception as e:
+            print("DEBUG: factory.Create() failed: %s" % e)
+        if new_iobj is None:
+            t_obj = factory.ObjectType
+            new_iobj = System.Activator.CreateInstance(t_obj)
+            print("DEBUG: Activator.CreateInstance(%s) ok" % t_obj.FullName)
+        new_guid = System.Guid.NewGuid()
+        print("DEBUG: adding object guid=%s under parent=%s" % (new_guid, parent.guid))
+        om.AddObject(handle, parent.guid, new_guid, new_iobj, RECEIVER_NAME, -1)
+        print("DEBUG: AddObject ok")
+        try:
+            factory.ObjectCreated(handle, new_guid)
+        except Exception as e:
+            print("DEBUG: factory.ObjectCreated failed: %s" % e)
         created = True
-        new_obj = _find_existing(parent, RECEIVER_NAME)
-        if new_obj is None:
-            raise RuntimeError("Receiver added but not found under parent afterwards")
-        obj_guid = new_obj.guid
+        obj_guid = new_guid
+        print("DEBUG: receiver created guid=%s" % obj_guid)
 
-    recv = om.GetObjectToModify(handle, obj_guid)
+    mo = om.GetObjectToModify(handle, obj_guid)
+    recv = mo.Object
     print("DEBUG: receiver IObject type: %s" % recv.GetType().FullName)
     recv.SenderGVLGuid = sender_guid
     recv.TaskName = TASK_NAME
@@ -139,31 +132,23 @@ try:
         nvp = recv.NetVarProperties
     except Exception as e:
         print("DEBUG: receiver NetVarProperties read failed: %s" % e)
+    # A receiver MIRRORS its sender's network properties through SenderGVLGuid.
+    # Giving the receiver's own properties a protocol/task would register a
+    # second netvar manager on the same task and collide with the sender's
+    # generated instance (Ambiguous use of NetVarManager_<proto>_<task>_0).
     if nvp is not None:
         try:
-            nvp.ProtocolName = "UDP"
-            nvp.ListIdentifier = str(LIST_IDENTIFIER)
-            nvp.TaskName = TASK_NAME
-            for candidate in ["Broadcast Adr.", "Broadcast address", "BroadcastAddress"]:
-                try:
-                    nvp.SetParameterValue(candidate, BROADCAST_ADDRESS)
-                    break
-                except Exception:
-                    pass
-            for candidate in ["Port", "UDP Port"]:
-                try:
-                    nvp.SetParameterValue(candidate, str(PORT))
-                    break
-                except Exception:
-                    pass
+            if str(getattr(nvp, 'ProtocolName', '')):
+                nvp.ProtocolName = ""
+                print("DEBUG: cleared receiver's own ProtocolName (mirrors the sender)")
         except Exception as e:
-            print("DEBUG: setting receiver NetVarProperties failed: %s" % e)
+            print("DEBUG: clearing receiver NetVarProperties failed: %s" % e)
     try:
         if hasattr(recv, 'CreateGuids'):
             recv.CreateGuids()
     except Exception as e:
         print("DEBUG: CreateGuids failed: %s" % e)
-    om.SetObject(handle, recv)
+    om.SetObject(mo, True, None)
     print("DEBUG: SetObject committed")
     try:
         primary_project.save()
@@ -171,7 +156,7 @@ try:
     except Exception as e:
         print("WARN: project.save() raised %s" % e)
 
-    check = om.GetObjectToRead(handle, obj_guid)
+    check = om.GetObjectToRead(handle, obj_guid).Object
     summary = {
         'receiver': RECEIVER_NAME,
         'parent': PARENT_PATH,
