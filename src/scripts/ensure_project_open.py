@@ -8,6 +8,11 @@ import traceback
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0 # seconds (use float for time.sleep)
 
+class DirtyProjectSwitchError(RuntimeError):
+    """Switching projects would close a project with unsaved changes.
+    Must propagate to the caller -- never swallowed by the retry loop."""
+    pass
+
 # Basic path cleanup without excessive escaping
 def clean_path(path_str):
     """Clean up a path for CODESYS scripting without excessive escaping"""
@@ -67,19 +72,28 @@ def ensure_project_open(target_project_path):
                     # modal that freezes the IDE thread, breaking every
                     # subsequent script call with 60s timeouts.
                     #
-                    # Save first so unsaved changes aren't lost. If save
-                    # raises (e.g. transient lock), fall through to close
-                    # anyway -- losing in-flight edits is worse than getting
-                    # stuck in a half-switched state forever.
+                    # NEVER save the prior primary here. Every modifying MCP
+                    # tool saves explicitly after its own change, so a dirty
+                    # project at switch time means changes NOBODY asked this
+                    # tool to persist (stray IDE edits, another session's
+                    # in-flight work). Silently saving them once rewrote a
+                    # template project that was only being read as an export
+                    # source (Sjobjorn seed, 2026-09-01). If it's dirty,
+                    # refuse the switch and make the caller decide.
                     print("DEBUG: Primary project is '%s', not the target '%s'. Closing it before opening target..." % (
                         current_project_path, normalized_target_path))
+                    prior_dirty = None
                     try:
-                        if hasattr(primary_project, 'save'):
-                            try:
-                                primary_project.save()
-                                print("DEBUG: Saved prior primary before close.")
-                            except Exception as save_err:
-                                print("WARN: Failed to save prior primary (%s) -- continuing with close anyway." % save_err)
+                        prior_dirty = bool(primary_project.dirty)
+                    except Exception as dirty_err:
+                        print("WARN: Could not read dirty flag of prior primary (%s). Assuming clean." % dirty_err)
+                    if prior_dirty:
+                        raise DirtyProjectSwitchError(
+                            "Refusing to switch projects: the currently open project '%s' has UNSAVED changes. "
+                            "Save them first (save_project) or discard them (close_project with saveFirst=false), "
+                            "then retry opening '%s'. ensure_project_open never saves a project on its own." % (
+                                current_project_path, normalized_target_path))
+                    try:
                         primary_project.close()
                         print("DEBUG: Closed prior primary '%s'." % current_project_path)
                         # Pump CODESYS so the close transition completes
@@ -92,6 +106,10 @@ def ensure_project_open(target_project_path):
                         print("WARN: Failed to close prior primary project: %s -- attempting open anyway." % close_err)
                     primary_project = None # Force open target project
 
+            except DirtyProjectSwitchError:
+                 # Deliberate refusal, not instability -- retrying or falling
+                 # through to projects.open would defeat the guard.
+                 raise
             except Exception as path_err:
                  # Failed even to get the path of the supposed primary project
                  print("WARN: Could not get path of current primary project: %s. Assuming not the target." % path_err)

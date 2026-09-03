@@ -131,12 +131,35 @@ try:
 
     primary_project.save()
 
-    after = []
+    # Verify against a FRESH task object, not the mutated one. Reading back
+    # `task.pous` on the same ref can show the entry gone while the project
+    # still has it (observed: removal "succeeded", save ran, POU still in the
+    # task after reopen -- Sjobjorn seed 2026-09-01). Re-walking the tree
+    # from the project root gets refs backed by the post-save model.
+    fresh_tc = None
     try:
-        for p in task.pous:
-            after.append(str(p))
+        _fresh_app = primary_project.active_application
     except Exception:
-        pass
+        _fresh_app = None
+    if _fresh_app is not None:
+        fresh_tc = find_task_config(_fresh_app)
+    if fresh_tc is None:
+        fresh_tc = find_task_config(primary_project)
+    fresh_task = find_task(fresh_tc, TASK_NAME) if fresh_tc is not None else None
+    if fresh_task is None:
+        raise RuntimeError("Verification failed: task '%s' not found on re-walk after save." % TASK_NAME)
+
+    after = []
+    verify_err = None
+    try:
+        for p in fresh_task.pous:
+            after.append(str(p))
+    except Exception as e:
+        verify_err = e
+
+    if verify_err is not None:
+        raise RuntimeError("Verification failed: could not re-read task '%s' call list after save: %s" % (
+            TASK_NAME, verify_err))
 
     if POU_NAME in after:
         raise RuntimeError("Removal reported success but '%s' is STILL in task '%s' call list: %s" % (

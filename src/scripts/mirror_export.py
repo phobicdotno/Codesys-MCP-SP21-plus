@@ -208,6 +208,59 @@ def walk(node, parent_fs_dir, parent_proj_path, stats):
             walk(c, new_dir, proj_path, stats)
 
 
+EXPORT_SIGNATURE = u'(* === CODESYS export'
+
+
+def prune_stale(mirror_root, written_paths):
+    """Delete mirror files for objects that no longer exist in the project,
+    then remove directories left empty. Renames and delete_object used to
+    leave stale .st files (and empty dirs) behind, so the mirror -- and any
+    git repo tracking it -- kept phantom objects until someone hand-pruned.
+
+    Safety: only files ending in .st whose FIRST LINE carries the export
+    signature are eligible. Anything else in the mirror tree (README, help
+    docs, user notes) is never touched."""
+    pruned_files = []
+    pruned_dirs = []
+    norm_written = set()
+    for p in written_paths:
+        norm_written.add(os.path.normcase(os.path.abspath(p)))
+    # Bottom-up so file removal happens before the emptiness check on the
+    # parent, and nested empty dirs collapse in one pass.
+    for root, dirs, files in os.walk(mirror_root, topdown=False):
+        for fname in files:
+            if not fname.lower().endswith('.st'):
+                continue
+            fpath = os.path.join(root, fname)
+            if os.path.normcase(os.path.abspath(fpath)) in norm_written:
+                continue
+            first_line = ''
+            try:
+                f = codecs.open(fpath, 'r', encoding='utf-8')
+                try:
+                    first_line = f.readline()
+                finally:
+                    f.close()
+            except Exception:
+                continue  # unreadable -> leave it alone
+            if not first_line.startswith(EXPORT_SIGNATURE):
+                continue
+            try:
+                os.remove(fpath)
+                pruned_files.append(fpath)
+            except Exception as e:
+                print("WARN: could not prune stale mirror file '%s': %s" % (fpath, e))
+        if os.path.normcase(os.path.abspath(root)) == os.path.normcase(os.path.abspath(mirror_root)):
+            continue
+        try:
+            if not os.listdir(root):
+                os.rmdir(root)
+                pruned_dirs.append(root)
+        except Exception:
+            pass
+    return pruned_files, pruned_dirs
+
+
 try:
     # Empty MIRROR_ROOT means "use the default" -- the TS auto-mirror caller
     # passes '' so the resolution stays in one place. Resolve here via the
@@ -227,6 +280,20 @@ try:
     for child in primary_project.get_children(False):
         walk(child, MIRROR_ROOT, '', stats)
 
+    # Prune AFTER a clean walk only: a walk error means some object's file
+    # was not (re)written this run, and pruning would then delete the last
+    # good copy of live code. Stale-but-present beats deleted-but-live.
+    pruned_files, pruned_dirs = [], []
+    if stats['errors']:
+        print("WARN: %d export error(s) -- skipping stale-file pruning this run." % len(stats['errors']))
+    else:
+        written = [entry['path'] for entry in stats['files']]
+        pruned_files, pruned_dirs = prune_stale(MIRROR_ROOT, written)
+        for p in pruned_files:
+            print("Pruned stale file: %s" % p)
+        for d in pruned_dirs:
+            print("Pruned empty dir:  %s" % d)
+
     by_kind = {}
     total_bytes = 0
     for entry in stats['files']:
@@ -236,6 +303,7 @@ try:
     print("--- Mirror summary ---")
     print("Files written:    %d" % len(stats['files']))
     print("Directories made: %d" % stats['dirs_created'])
+    print("Stale pruned:     %d file(s), %d empty dir(s)" % (len(pruned_files), len(pruned_dirs)))
     print("Total bytes:      %d" % total_bytes)
     print("By kind:")
     for k in sorted(by_kind.keys()):

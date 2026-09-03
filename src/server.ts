@@ -3652,6 +3652,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
           PARAM_ID: args.parameterId !== undefined ? String(args.parameterId) : '',
           NEW_VALUE: pyStringLiteral(''),
           GET_ONLY: 'True',
+          ELEMENT_INDEX: '',
         },
         DEVICE_HELPERS
       );
@@ -3661,21 +3662,25 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         return formatToolResponse(result, '');
       }
       const m = result.output.match(/Parameter:\s*(.+)\r?\nValue:\s*(.+)/);
-      return { content: [{ type: 'text' as const, text: m ? `${m[1].trim()} = ${m[2].trim()}` : result.output }], isError: false };
+      // Array/struct parameters carry their data in sub-elements; show them.
+      const subs = result.output.match(/SubElements:[\s\S]*?(?=SCRIPT_SUCCESS)/);
+      const scalar = m ? `${m[1].trim()} = ${m[2].trim()}` : result.output;
+      return { content: [{ type: 'text' as const, text: subs ? `${scalar}\n${subs[0].trimEnd()}` : scalar }], isError: false };
     }
   );
 
   s.tool(
     'set_device_parameter',
-    "Writes a device parameter's value (offline, in the project) and saves. Find the parameter by name or id (see list_device_parameters). Takes effect on the PLC after the next download.",
+    "Writes a device parameter's value (offline, in the project) and saves. Find the parameter by name or id (see list_device_parameters). Array/struct parameters: pass value as '[v0, v1, ...]' to write all elements, or set elementIndex to write one. Takes effect on the PLC after the next download.",
     {
       projectFilePath: z.string().describe("Path to the project file."),
       devicePath: z.string().optional().describe("Tree path of the device. Omit for the first device."),
       parameterName: z.string().optional().describe("Parameter name (matches name or visible_name)."),
       parameterId: z.number().int().optional().describe("Parameter id."),
-      value: z.string().describe("New value (string form, e.g. '1', 'true', '230')."),
+      value: z.string().describe("New value (string form, e.g. '1', 'true', '230'; or '[1, 2, 3]' for a whole array parameter)."),
+      elementIndex: z.number().int().min(0).optional().describe("For array/struct parameters: write only this sub-element (0-based). Omit for scalar parameters or whole-array writes."),
     },
-    async (args: { projectFilePath: string; devicePath?: string; parameterName?: string; parameterId?: number; value: string }) => {
+    async (args: { projectFilePath: string; devicePath?: string; parameterName?: string; parameterId?: number; value: string; elementIndex?: number }) => {
       const escaped = resolvePath(args.projectFilePath, workspaceDir);
       if (!args.parameterName && args.parameterId === undefined) {
         return { content: [{ type: 'text' as const, text: 'Error: provide parameterName or parameterId.' }], isError: true };
@@ -3689,13 +3694,14 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
           PARAM_ID: args.parameterId !== undefined ? String(args.parameterId) : '',
           NEW_VALUE: pyStringLiteral(args.value),
           GET_ONLY: 'False',
+          ELEMENT_INDEX: args.elementIndex !== undefined ? String(args.elementIndex) : '',
         },
         DEVICE_HELPERS
       );
       const result = await executor.executeScript(script, 60_000);
       return await formatModifyingResponse(
         result,
-        `Device parameter ${args.parameterName ?? args.parameterId} set to '${args.value}'. Project saved.`,
+        `Device parameter ${args.parameterName ?? args.parameterId}${args.elementIndex !== undefined ? `[${args.elementIndex}]` : ''} set to '${args.value}'. Project saved.`,
         escaped,
         mirrorCtx
       );
