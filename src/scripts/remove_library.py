@@ -167,9 +167,19 @@ try:
     lib_manager.remove_library(existing_name)
     print("DEBUG: remove_library('%s') returned without exception." % existing_name)
 
-    # Verify removal succeeded by re-checking lm.references.
-    still_present = _find_reference(lib_manager, LIBRARY_NAME)
-    if still_present is not None:
+    # Verify removal succeeded by re-checking lm.references. Use EXACT-name equality
+    # against the specific removed ref, not prefix-matching _find_reference -- otherwise a
+    # same-base-name sibling (e.g. 'X' vs 'X, * (System)') causes a false 'still present'
+    # failure and refuses to save a successful removal. (NVL-bench fix)
+    def _exact_present(lm, name):
+        try: refs = lm.references
+        except Exception: return False
+        for r in (refs or []):
+            try:
+                if getattr(r, 'name', None) == name: return True
+            except Exception: pass
+        return False
+    if _exact_present(lib_manager, existing_name):
         raise RuntimeError(
             "remove_library('%s') returned without error but the reference "
             "is still present in lm.references. Project NOT saved." % existing_name)
