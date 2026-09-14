@@ -733,14 +733,19 @@ export function buildReleaseCommitMessage(version: string, levelLabel: string, e
  * decides the bump level) plus any file that only changed because of the bump
  * itself. The classifier runs before the bump, so `_MCP_PROJECT_VERSION.st`
  * never appeared in the released file list although every release changes it.
+ * Only file lines are taken from the post-bump list, so a failed post-bump
+ * diff cannot add a "git diff ... failed" line. Once any file line is present,
+ * a pre-bump "no changes in <mirror> since baseline" line is dropped, because
+ * the bump itself changed a mirror file (sha-fallback build releases).
  * Order is kept; duplicates are dropped.
  */
 export function mergeReleaseEvidence(beforeBump: string[], afterBump: string[]): string[] {
+  const isFileLine = (e: string) => /^(modified|added|deleted|renamed|added \(untracked\)): /.test(e);
   const out = [...beforeBump];
   for (const e of afterBump) {
-    if (!out.includes(e)) out.push(e);
+    if (isFileLine(e) && !out.includes(e)) out.push(e);
   }
-  return out;
+  return out.some(isFileLine) ? out.filter((e) => !/^no changes in .* since baseline$/.test(e)) : out;
 }
 
 function renderPouDumpMd(pou: PouEntry[], projectName: string): string {

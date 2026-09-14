@@ -48,6 +48,24 @@ describe('mergeReleaseEvidence', () => {
     ];
     expect(mergeReleaseEvidence(before, after)).toEqual([...before, `modified: ${MIRROR}/_MCP_PROJECT_VERSION.st`]);
   });
+
+  it('drops "no changes" once the bump changed a file (sha-fallback build release)', () => {
+    const sha = 'binary .project SHA changed (aaa... -> bbb...) but no mirror diff';
+    const before = ['baseline: tag v2.0.5.0', 'no changes in mcp-mirror/ since baseline', sha];
+    const after = ['baseline: tag v2.0.5.0', `modified: ${MIRROR}/_MCP_PROJECT_VERSION.st`];
+    expect(mergeReleaseEvidence(before, after)).toEqual(['baseline: tag v2.0.5.0', sha, `modified: ${MIRROR}/_MCP_PROJECT_VERSION.st`]);
+  });
+
+  it('ignores non-file lines from the post-bump list', () => {
+    const before = ['baseline: tag v1.0.0.0', `modified: ${MIRROR}/A.st`];
+    const after = ['baseline: tag v1.0.0.0', 'git diff against v1.0.0.0 failed -- treating as no-changes'];
+    expect(mergeReleaseEvidence(before, after)).toEqual(before);
+  });
+
+  it('leaves a first-run list unchanged', () => {
+    const first = ['no v* tag found -- first-run'];
+    expect(mergeReleaseEvidence(first, first)).toEqual(first);
+  });
 });
 
 describe('gitCommitWithMessage', () => {
