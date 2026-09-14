@@ -689,10 +689,58 @@ function gitCommitArtifactRepair(projectDir: string, repairLog: string[]): void 
   const msg =
     'Regenerate text artefact(s) missed by an earlier release\n\n' +
     repairLog.map((l) => `  - ${l}`).join('\n') + '\n';
-  execSync(`git -C "${projectDir}" commit -m ${JSON.stringify(msg)}`, {
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  gitCommitWithMessage(projectDir, msg);
+}
+
+/**
+ * Commit with the message in a temp file (`git commit -F`), never
+ * `-m ${JSON.stringify(msg)}`. On Windows the shell passed the JSON escapes
+ * through unchanged, so every release commit carried literal "\n" sequences
+ * instead of line breaks (e.g. Lib001 v2.0.4.0 and v2.0.5.0). The tag body
+ * already used -F for the same reason.
+ */
+export function gitCommitWithMessage(projectDir: string, msg: string): void {
+  const msgFile = path.join(
+    os.tmpdir(),
+    `codesys-mcp-commitmsg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}.txt`
+  );
+  fs.writeFileSync(msgFile, msg, 'utf-8');
+  try {
+    execSync(`git -C "${projectDir}" commit -F "${msgFile}"`, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } finally {
+    try { fs.unlinkSync(msgFile); } catch { /* best-effort cleanup */ }
+  }
+}
+
+/**
+ * Release commit message: subject line, blank line, then EVERY evidence item
+ * on its own line. The old message joined only the first 5 items with "; "
+ * and cut the result at 200 characters, so the file list was truncated
+ * mid-path.
+ */
+export function buildReleaseCommitMessage(version: string, levelLabel: string, evidence: string[]): string {
+  const body = evidence.length > 0
+    ? evidence.map((e) => `- ${e}`).join('\n')
+    : '- (no classification evidence)';
+  return `release v${version} (${levelLabel})\n\n${body}\n`;
+}
+
+/**
+ * Evidence for the Changelog and commit: the pre-bump classification (which
+ * decides the bump level) plus any file that only changed because of the bump
+ * itself. The classifier runs before the bump, so `_MCP_PROJECT_VERSION.st`
+ * never appeared in the released file list although every release changes it.
+ * Order is kept; duplicates are dropped.
+ */
+export function mergeReleaseEvidence(beforeBump: string[], afterBump: string[]): string[] {
+  const out = [...beforeBump];
+  for (const e of afterBump) {
+    if (!out.includes(e)) out.push(e);
+  }
+  return out;
 }
 
 function renderPouDumpMd(pou: PouEntry[], projectName: string): string {
@@ -5314,11 +5362,19 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         log.push(`mirror_export (post-bump): WARNING -- ${e instanceof Error ? e.message : String(e)}`);
       }
 
+      // 3c. Re-list the changed mirror files now that the bump has been
+      // exported, so files changed BY the bump (_MCP_PROJECT_VERSION.st) are
+      // recorded too. The bump level stays the pre-bump classification.
+      const releaseEvidence = mergeReleaseEvidence(
+        classification.evidence,
+        classifyMcpMirrorChanges(projectDir, mirrorDirName).evidence
+      );
+
       // 4. Append Changelog (the manual-bump path doesn't auto-append; do it here)
       // The success message is only printed once the write is verified by
       // re-reading the file (see appendChangelogEntry) -- a silent no-op
       // must never be reported as a success.
-      const changelogUpdate = appendChangelogEntry(projectDir, from, newVersion, levelLabel, classification.evidence);
+      const changelogUpdate = appendChangelogEntry(projectDir, from, newVersion, levelLabel, releaseEvidence);
       if (changelogUpdate.status === 'written') {
         log.push(`Changelog.md: appended v${newVersion} (${changelogUpdate.style} style, verified on disk)`);
       } else {
@@ -5356,9 +5412,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         const addArgs = addPaths.map((p) => `"${p}"`).join(' ');
         execSync(`git -C "${projectDir}" add ${addArgs}`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
 
-        const summary = classification.evidence.slice(0, 5).join('; ').slice(0, 200);
-        const commitMsg = `release v${newVersion} (${levelLabel})\n\n${summary}\n`;
-        execSync(`git -C "${projectDir}" commit -m ${JSON.stringify(commitMsg)}`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+        gitCommitWithMessage(projectDir, buildReleaseCommitMessage(newVersion, levelLabel, releaseEvidence));
 
         // Compute the post-commit SHAs and embed them in the annotated tag.
         // These represent the state at this released version: any future
