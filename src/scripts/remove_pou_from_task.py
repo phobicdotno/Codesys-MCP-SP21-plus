@@ -44,6 +44,16 @@ def find_task(tc, name):
             return t
     return None
 
+def find_call_object(task, pou_name):
+    # Each entry in a task's call list is also a child object of the task
+    # (visible under the task in the device tree). Match on the child's name;
+    # a call may be shown qualified ('App.PRG'), so compare the last segment too.
+    for ch in _children(task):
+        n = _name(ch)
+        if n == pou_name or n.split('.')[-1] == pou_name:
+            return ch
+    return None
+
 try:
     primary_project = ensure_project_open(PROJECT_FILE_PATH)
     if 'apply_application_selection' in globals():
@@ -89,7 +99,24 @@ try:
     removed = False
     errors = []
 
-    # remove(int index) FIRST: on SP21 both remove(name) and del pous[i] can
+    # Task child object FIRST. On SP21 every task.pous mutation below can
+    # return without error AND without effect - remove(int) included (Sjobjorn
+    # 2026-09-15: MainTask/PLC_PRG survived in both applications; the fresh
+    # re-walk caught it). ScriptObject.remove() on the call entry, the route
+    # delete_object takes, does persist. The pous variants stay as fallbacks
+    # for SPs whose tasks expose no call children.
+    call_obj = find_call_object(task, POU_NAME)
+    if call_obj is not None and hasattr(call_obj, 'remove'):
+        try:
+            call_obj.remove(); removed = True
+            print("DEBUG: removed task call object '%s' via ScriptObject.remove()" % _name(call_obj))
+        except Exception as e:
+            errors.append("child.remove(): %s" % e)
+    else:
+        errors.append("child.remove(): no call child named '%s' under task (children: %s)" % (
+            POU_NAME, ", ".join([_name(c) for c in _children(task)])))
+
+    # remove(int index): on SP21 both remove(name) and del pous[i] can
     # return without effect (no exception, entry persists -- observed Sea
     # Leopard 2026-07-24 after a program rename left a stale call). The int
     # overload of remove(index_or_name) is the variant that actually mutates.

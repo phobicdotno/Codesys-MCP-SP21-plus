@@ -61,6 +61,24 @@ describe('Script safety guards — Sjobjorn seed fixes', () => {
     expect(script).not.toMatch(/primary_project\.save\(\)[\s\S]*for p in task\.pous/);
   });
 
+  it('remove_pou_from_task removes the call as a task child object before touching task.pous', () => {
+    // On SP21 every task.pous mutation (remove(int), remove(name), del pous[i]) returns without
+    // error and without effect (Sjobjorn 2026-09-15, MainTask/PLC_PRG in both applications).
+    // The call entry is also a child object of the task, and ScriptObject.remove() on it
+    // does persist - the same route delete_object takes.
+    const script = mgr.prepareScriptWithHelpers(
+      'remove_pou_from_task', { ...P, TASK_NAME: 'MainTask', POU_NAME: 'PLC_PRG' }, ['ensure_project_open']
+    );
+    expect(script).toContain('def find_call_object(task, pou_name)');
+    const childRemove = script.indexOf('call_obj.remove()');
+    const pousRemove = script.indexOf('pous.remove(');
+    expect(childRemove).toBeGreaterThan(-1);
+    expect(pousRemove).toBeGreaterThan(-1);
+    expect(childRemove).toBeLessThan(pousRemove);
+    // The fresh re-walk verification stays the final authority.
+    expect(script.indexOf('call_obj.remove()')).toBeLessThan(script.indexOf('fresh_task = find_task(fresh_tc, TASK_NAME)'));
+  });
+
   it('set_device_parameter supports elementIndex and whole-array literals', () => {
     const script = mgr.prepareScriptWithHelpers(
       'set_device_parameter',
