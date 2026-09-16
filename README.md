@@ -10,7 +10,7 @@
 
 MCP server for CODESYS with a persistent UI instance and file-based IPC. Unlike headless-only approaches that spawn a new CODESYS process per command, this server launches CODESYS **with its UI visible** and keeps it running. MCP tool calls are sent to the same instance via a file-based IPC watcher, so changes appear in real-time and the user can interact with the IDE alongside AI-driven automation.
 
-**106 MCP tools**: project/POU authoring, compile, online/runtime ops, device + task configuration, symbol configuration, NVL, multi-device projects, and a version-anchor + git release pipeline. Full catalogue in [docs/tools.md](docs/tools.md).
+**107 MCP tools**: project/POU authoring, compile, online/runtime ops, device + task configuration, symbol configuration, NVL, multi-device projects, and a version-anchor + git release pipeline. Full catalogue in [docs/tools.md](docs/tools.md).
 
 ---
 
@@ -107,7 +107,7 @@ To avoid touching the global node_modules, skip `npm link` and point `.mcp.json`
 
 | Doc | Contents |
 |---|---|
-| [docs/tools.md](docs/tools.md) | All 106 MCP tools + resources, per category, with fix/NEW annotations |
+| [docs/tools.md](docs/tools.md) | All 107 MCP tools + resources, per category, with fix/NEW annotations |
 | [docs/cli-reference.md](docs/cli-reference.md) | Every CLI flag, env vars, `--detect`, `--ssh-version`, running without `.mcp.json` |
 | [docs/installs-and-profiles.md](docs/installs-and-profiles.md) | Multiple CODESYS installs, `--for-project`, `--codesys-additional-folder`, the repo version pin |
 | [docs/auto-mirror.md](docs/auto-mirror.md) | Live source-control diff via `--auto-mirror` |
@@ -130,7 +130,7 @@ npm run typecheck  # tsc --noEmit
 ```
 src/
   bin.ts              CLI entry point
-  server.ts           MCP tool/resource registration (106 tools, 3 resources)
+  server.ts           MCP tool/resource registration (107 tools, 3 resources)
   launcher.ts         CODESYS process management
   ipc.ts              File-based IPC transport
   headless.ts         Headless fallback executor

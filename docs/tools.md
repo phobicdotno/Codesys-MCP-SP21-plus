@@ -1,6 +1,6 @@
 # MCP Tools & Resources
 
-106 tools across the categories below. Tools marked **NEW** were added in this fork; tools marked **FIXED** existed upstream but were broken before this fork.
+107 tools across the categories below. Tools marked **NEW** were added in this fork; tools marked **FIXED** existed upstream but were broken before this fork.
 
 ## Management Tools
 
@@ -95,6 +95,27 @@
 | `create_nvl_receiver` | Add a Network Variable List (Receiver) object bound to a sender GVL |
 
 The scripting API has no NVL support; these tools use the IDE's Automation Platform API (`IGVLObject2.CreateNetVarProperties`, `INetVarProperties`, `INVLObject`) from the IronPython scripts, proven live on a two-device project (SystemInstances.ObjectMgr, reflective attach of detached NetVarProperties, receiver creation via ObjectFactoryManager).
+
+## CODESYS Redundancy (**NEW**)
+
+| Tool | Description |
+|------|-------------|
+| `create_redundancy_config` | Add or update an application's Redundancy Configuration: link IPs/ports (1st + 2nd link), redundancy task, timeouts, auto sync, debug messages, sync-time trace, Registered Areas (objects excluded from synchronization). Optional online steps: Set Path PLC2 (by address, which also works through an SSH tunnel, or by gateway scan name), and Write the settings to both PLCs |
+
+The scripting API has no redundancy support either. The tool uses the Automation Platform API of the CODESYS Redundancy add-on (`RedundancyObject.plugin` / `RedundancyEditor.plugin` 4.3.0.0, reflected from SP21 P5):
+
+- The object is created through its `ObjectFactoryManager` factory and configured through `IRedundancySettings` (`IpAddressPlc1FirstLink`, `PortFirstLink`, `StandbyWaitTime` = GUI "Timeout", `SyncWaitTime` = GUI "Synchronization timeout", `AutoSyncEnabled`, ...). Only the arguments you pass are changed.
+- PLC2 lives in a hidden root device object `RedundancyDevice_<objectGuid>` (guid = `IRedundancyObject.DeviceObjectGuid`, same device identification as the application's device, device factory `{84d12aa5-3225-473b-9df6-18af40889bdf}`, create flag `2` = hidden). The editor normally creates it on first open; the tool creates it when missing, because a missing one makes every compile pop "The object GUID '00000000-...' is not valid".
+- "Set Path PLC2" and "Write" are the editor's own commands. `plc2DeviceName` runs the batch command `redundancy setactivepathplc2 <objectGuid> <gatewayName> <scannedDeviceName>`, which matches a UDP scan result. `plc2Address` instead calls `SetActivePathPlc2Command.SetActivePath` directly with an address, which is the only way to bind a PLC a scan cannot see - an SSH-tunnelled `127.0.0.1:<port>`, for instance. Write is the batch command `redundancy writesettings <objectGuid>`.
+- Neither is dialog-free: they connect through their own layer, so the **Device User Login dialog appears even when `deviceUser`/`devicePassword` are given**, and Write reports failures in an error message box instead of raising. The tool therefore fails Set Path PLC2 when no address was bound afterwards, and connects to both PLCs itself before Write. PLC1 is the application's own device; bind it with `rebind_device_to_scan_result`.
+- Registered Areas are set with `IRedundancyObject.RegisterNonRedundantArea` / `UnregisterNonRedundantArea`.
+- **Known gap vs the GUI editor:** the editor also maintains the object's internal `CyclicUpdate` list (`RedundancyObjectHelper.SetUpdateCyclicAll` walking every program and GVL, SP21+ only). The tool does not, so a tool-made configuration has an empty `CyclicUpdate` where a GUI-made one lists every registered area. It compiles clean either way; open the editor if the application needs those flags.
+
+Live-verified 2026-09-16 on CODESYS 3.5 SP21 P5 against a lab pair of WAGO PFC200 750-8210 FW31 (10.0.0.205 / 10.0.0.207, both reached through SSH tunnels):
+
+- Fresh create and update, compile 0 errors; and the repair case - a Redundancy Configuration imported with `DeviceObjectGuid` = 0 (which made every compile pop the invalid-GUID dialog) compiled 0/0 after the tool assigned the guid and created the hidden device.
+- `plc2Address` bound PLC2 over a tunnel (resolved name `PFC200V3-4F1A5F`); the scan-by-name path failed loudly when the device was not in the scan.
+- `writeSettings` landed on BOTH controllers, verified over SSH: on FW31 the runtime stores them in `/home/codesys_root/CODESYSControl.cfg` (`[CmpRedundancyConnectionIP]` `Link1.IpAddressLocal`/`IpAddressPeer`/`Port`, `[CmpRedundancy]` `StandbyWaitTime`, `SyncWaitTime`, `AutoSyncEnabled`, `RedundancyTaskName`, ...), **not** in the `eRUNTIME.cfg` named by WAGO's FW26-era how-to. Write also mirrors the link addresses per controller and sets `PlcIdent` 1 on PLC1 and 2 on PLC2.
 
 ## Multi-device projects (**NEW**, v0.16.0)
 

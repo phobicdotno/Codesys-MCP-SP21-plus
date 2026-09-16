@@ -53,3 +53,12 @@ The online tools (`connect_to_device`, `read_variable`, etc.) require:
 
 **"Refusing to switch projects: ... has UNSAVED changes"**
 A tool addressed project B while project A was open with unsaved changes. Since v0.17.0 the server never saves A on its own - call `save_project` (to keep the changes) or `close_project` with `saveFirst=false` (to discard them), then retry.
+
+**`create_redundancy_config` pops the Device User Login dialog although `deviceUser`/`devicePassword` were passed**
+Expected, and unavoidable from the script side. The credential pre-registration (`ScriptOnline.set_default_credentials`) covers the scripting API's own login, but the redundancy commands open their own connections (`IOnlineDevice3.SharedConnect` for Write, `IOnlineDevice.Connect` + `GetTargetIdent` for Set Path PLC2), which that registration does not reach. Observed on a WAGO PFC200 pair: the dialog appears and someone has to fill it in. Announce the online step to the user beforehand so they are at the keyboard; the tool call simply waits.
+
+**`create_redundancy_config` Write "succeeded" but `/home/codesys_root/eRUNTIME.cfg` does not exist on the PLC**
+That path comes from WAGO's FW26-era how-to. On PFC200 FW31 (runtime 3.5.21.x) the settings are stored in **`/home/codesys_root/CODESYSControl.cfg`**, in the sections `[CmpRedundancyConnectionIP]` (`Link1.IpAddressLocal` / `Link1.IpAddressPeer` / `Link1.Port`, mirrored per controller) and `[CmpRedundancy]` (`StandbyWaitTime`, `SyncWaitTime`, `AutoSyncEnabled`, `RedundancyTaskName`, `PlcIdent`, ...). Write also assigns `PlcIdent` 1 to PLC1 and 2 to PLC2. The settings take effect after a runtime restart, so read the file to confirm a Write rather than trusting the tool's own report.
+
+**`create_redundancy_config` Set Path PLC2 fails with "Setting the active path of PLC 2 failed"**
+The gateway scan found no device with that `plc2DeviceName`. Check the name against `scan_network_devices`, and remember that an SSH-tunnelled PLC is invisible to UDP discovery: bind it with `plc2Address` (e.g. `127.0.0.1:11746`) instead, which skips the scan.

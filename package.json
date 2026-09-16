@@ -15,6 +15,7 @@
     "build": "tsc && node -e \"const fs=require('fs');fs.rmSync('dist/scripts',{recursive:true,force:true});fs.cpSync('src/scripts','dist/scripts',{recursive:true})\"",
     "test": "vitest --run",
     "test:watch": "vitest",
+    "test:no-vitest": "node tests/run-without-vitest.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm test"
   },

@@ -2,6 +2,17 @@
 
 A complete map of the **37 tools** registered in [`src/server.ts`](../src/server.ts), with current working/broken status, what each one does, **measured** timings in **headless** vs **persistent** mode, and a deep-dive + landed fix for each broken tool.
 
+## When vitest will not start
+
+On some Windows/Node combinations vitest hangs before running anything - every file, including untouched ones, with no output past the Vite CJS deprecation notice (seen with Node 24). `npm run test:no-vitest` is the fallback: it transpiles each `.test.ts` with the bundled esbuild, injects small `describe`/`it`/`expect` shims, and runs the **same test files**, so they stay the single source of truth.
+
+```bash
+npm run test:no-vitest                                        # every test file
+node tests/run-without-vitest.mjs tests/unit/detect.test.ts   # one file
+```
+
+It implements only the matchers these suites use and runs everything serially in-process; `vi` mocking and async hooks are not supported. An unimplemented matcher throws rather than passing silently. Use `npm test` whenever vitest works.
+
 For runnable benchmarks see [`bench.mjs`](bench.mjs):
 
 ```bash

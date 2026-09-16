@@ -1109,6 +1109,56 @@ function pyBool(b: boolean): string {
   return b ? 'True' : 'False';
 }
 
+/** Tool arguments of create_redundancy_config that map onto IRedundancySettings. */
+export interface RedundancySettingsArgs {
+  plc1LinkIp?: string;
+  plc2LinkIp?: string;
+  linkPort?: number;
+  useSecondLink?: boolean;
+  plc1SecondLinkIp?: string;
+  plc2SecondLinkIp?: string;
+  secondLinkPort?: number;
+  taskName?: string;
+  timeoutMs?: number;
+  syncTimeoutMs?: number;
+  bootUpWaitTimeMs?: number;
+  autoSync?: boolean;
+  dataSyncAlways?: boolean;
+  debugMessages?: boolean;
+  syncTimeTrace?: boolean;
+}
+
+/**
+ * Map create_redundancy_config arguments to IRedundancySettings property
+ * names (RedundancyObject.plugin). Only the arguments that were passed are
+ * included, so an update leaves every other setting untouched.
+ */
+export function buildRedundancySettings(args: RedundancySettingsArgs): Record<string, string | number | boolean> {
+  const map: Array<[keyof RedundancySettingsArgs, string]> = [
+    ['plc1LinkIp', 'IpAddressPlc1FirstLink'],
+    ['plc2LinkIp', 'IpAddressPlc2FirstLink'],
+    ['linkPort', 'PortFirstLink'],
+    ['useSecondLink', 'UseSecondLink'],
+    ['plc1SecondLinkIp', 'IpAddressPlc1SecondLink'],
+    ['plc2SecondLinkIp', 'IpAddressPlc2SecondLink'],
+    ['secondLinkPort', 'PortSecondLink'],
+    ['taskName', 'RedundancyTaskName'],
+    ['timeoutMs', 'StandbyWaitTime'],
+    ['syncTimeoutMs', 'SyncWaitTime'],
+    ['bootUpWaitTimeMs', 'BootUpWaitTime'],
+    ['autoSync', 'AutoSyncEnabled'],
+    ['dataSyncAlways', 'DataSyncAlways'],
+    ['debugMessages', 'DebugMessages'],
+    ['syncTimeTrace', 'EnableSyncTimeTrace'],
+  ];
+  const out: Record<string, string | number | boolean> = {};
+  for (const [arg, prop] of map) {
+    const v = args[arg];
+    if (v !== undefined) out[prop] = v;
+  }
+  return out;
+}
+
 /** Shared description for the optional applicationPath argument (multi-device projects). */
 const APP_PATH_DESC =
   "Multi-device projects only: which application to act on, given as the full path ('Master/Plc Logic/Application'), " +
@@ -3549,6 +3599,105 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
       const b = result.output.indexOf('### NVL_RECEIVER_END ###');
       const summary = a !== -1 && b !== -1 && a < b ? result.output.substring(a + 26, b).trim() : '';
       return { content: [{ type: 'text' as const, text: `NVL receiver '${args.receiverName}' under '${args.parentPath}' bound to '${args.senderGvlPath}' (list ${args.listIdentifier}, task ${args.taskName}). Project saved.${summary ? `\n${summary}` : ''}` }], isError: false };
+    }
+  );
+
+  // ─── CODESYS Redundancy via the Automation Platform API ─────
+  // The scripting API has no redundancy support. The object, its settings and
+  // the hidden PLC2 device object are handled through RedundancyObject.plugin;
+  // Set Path PLC2 and Write run the editor's own batch commands
+  // ("redundancy setactivepathplc2" / "redundancy writesettings").
+
+  s.tool(
+    'create_redundancy_config',
+    "Adds the 'Redundancy Configuration' object to an application (or updates the existing one) and configures it without the GUI editor: redundancy link IPs/ports (1st and optional 2nd link), redundancy task, timeouts, auto sync, debug messages, sync-time trace, and which GVLs/POUs are excluded from synchronization (Registered Areas). Always creates the hidden PLC2 device object the editor normally creates on first open when it is missing (a missing one makes every compile pop 'The object GUID ... is not valid'). Optional online steps for the PLC2 path (both fail loudly if no address ends up bound; PLC1 is the application's own device, set it with rebind_device_to_scan_result): plc2Address binds PLC2 to an address and is the only option that works for a PLC a UDP scan cannot see, such as an SSH-tunnelled one (live-proven); plc2Gateway + plc2DeviceName instead runs the editor's 'Set Path PLC2' batch command, which matches a gateway scan result by name (only its failure path has been exercised so far). writeSettings=true first connects to both PLCs, then runs the editor's 'Write' batch command, which pushes the settings to BOTH PLCs and assigns PlcIdent 1/2; they apply after a runtime restart. On WAGO PFC200 FW31 they land in /home/codesys_root/CODESYSControl.cfg ([CmpRedundancyConnectionIP] + [CmpRedundancy]), not in the eRUNTIME.cfg of WAGO's older how-to. writeSettings requires the PLC2 path. AGENT BEHAVIOUR REQUIRED for the online steps: announce them first and warn that modal IDE dialogs may pop. A Device User Login dialog DOES appear for these commands (observed on the lab pair) because they connect through their own layer, which deviceUser/devicePassword does not reach; a Write failure after the reachability check is shown as an error message box. Only the fields you pass are changed. Saves the project. Needs the CODESYS Redundancy add-on in the IDE profile. KNOWN GAP: unlike the GUI editor, the tool does not populate the object's internal CyclicUpdate list (the editor's per-object 'update cyclic' flag), so a tool-made configuration has no cyclically-updated areas; set them in the editor if the application needs them.",
+    {
+      projectFilePath: z.string().describe("Path to the project file."),
+      applicationPath: z.string().optional().describe(APP_PATH_DESC),
+      parentPath: z.string().describe("The application that gets the redundancy object (e.g. 'Application' or 'PLC1/Plc Logic/Application')."),
+      objectName: z.string().optional().describe("Object name when creating. Default 'Redundancy Configuration'. Ignored when the application already has one."),
+      plc1LinkIp: z.string().optional().describe("1st redundancy link: IP address of PLC1."),
+      plc2LinkIp: z.string().optional().describe("1st redundancy link: IP address of PLC2."),
+      linkPort: z.number().int().min(1).max(65535).optional().describe("1st redundancy link UDP port (IDE default 1205)."),
+      useSecondLink: z.boolean().optional().describe("Use a 2nd redundancy link."),
+      plc1SecondLinkIp: z.string().optional().describe("2nd redundancy link: IP address of PLC1."),
+      plc2SecondLinkIp: z.string().optional().describe("2nd redundancy link: IP address of PLC2."),
+      secondLinkPort: z.number().int().min(1).max(65535).optional().describe("2nd redundancy link UDP port."),
+      taskName: z.string().optional().describe("Redundancy task (must be cyclic), e.g. 'MainTask'."),
+      timeoutMs: z.number().int().min(1).optional().describe("'Timeout (ms)' on the General tab (StandbyWaitTime). WAGO's how-to: must be lower than the redundancy task cycle time; their example uses 30."),
+      syncTimeoutMs: z.number().int().min(0).optional().describe("'Synchronization timeout (ms)' (SyncWaitTime). WAGO example: 300."),
+      bootUpWaitTimeMs: z.number().int().min(0).optional().describe("Bootup timeout (ms) (BootUpWaitTime). IDE default 5000."),
+      autoSync: z.boolean().optional().describe("Auto sync: re-pair automatically after the link comes back."),
+      dataSyncAlways: z.boolean().optional().describe("Data sync always."),
+      debugMessages: z.boolean().optional().describe("Debug messages in the runtime log."),
+      syncTimeTrace: z.boolean().optional().describe("Record the needed sync time in the system trace."),
+      nonRedundantObjects: z.array(z.string()).optional().describe("GVLs/programs to EXCLUDE from synchronization (untick in Registered Areas), e.g. ['Application/GVL_NoSync']."),
+      redundantObjects: z.array(z.string()).optional().describe("GVLs/programs to include again (re-tick in Registered Areas)."),
+      plc2Gateway: z.string().optional().describe("Online: gateway NAME used to reach PLC2 (e.g. 'Gateway-1'). Defaults to 'Gateway-1' when plc2Address is given. Needed with plc2DeviceName."),
+      plc2DeviceName: z.string().optional().describe("Online: device name of PLC2 exactly as the network scan shows it (e.g. 'PFC200V3-4F1A5F'). Mutually exclusive with plc2Address."),
+      plc2Address: z.string().optional().describe("Online: bind PLC2 by ADDRESS instead of by scan name - 'ip[:port]' (e.g. '127.0.0.1:11746' for an SSH-tunnelled PLC, or '10.0.0.207') or a system address in brackets ('[0301.5029]'). Use this when the gateway cannot see the PLC in a UDP scan, which is the case for tunnels. Mutually exclusive with plc2DeviceName."),
+      writeSettings: z.boolean().optional().describe("Online: push the settings to both PLCs (the editor's Write button). Default false."),
+      deviceUser: z.string().optional().describe("Device user, pre-registered via set_default_credentials. NOTE: it does NOT suppress the dialog for the redundancy commands (they connect through their own layer) - expect to fill in the Device User Login dialog. Falls back to env CODESYS_DEVICE_USER."),
+      devicePassword: z.string().optional().describe("Device password for the online steps. Falls back to env CODESYS_DEVICE_PASSWORD."),
+    },
+    async (args: {
+      projectFilePath: string; applicationPath?: string; parentPath: string; objectName?: string;
+      plc1LinkIp?: string; plc2LinkIp?: string; linkPort?: number; useSecondLink?: boolean;
+      plc1SecondLinkIp?: string; plc2SecondLinkIp?: string; secondLinkPort?: number; taskName?: string;
+      timeoutMs?: number; syncTimeoutMs?: number; bootUpWaitTimeMs?: number; autoSync?: boolean;
+      dataSyncAlways?: boolean; debugMessages?: boolean; syncTimeTrace?: boolean;
+      nonRedundantObjects?: string[]; redundantObjects?: string[];
+      plc2Gateway?: string; plc2DeviceName?: string; plc2Address?: string; writeSettings?: boolean;
+      deviceUser?: string; devicePassword?: string;
+    }) => {
+      if (args.plc2DeviceName && args.plc2Address) {
+        return { content: [{ type: 'text' as const, text: 'Give either plc2DeviceName (bind by scan) or plc2Address (bind by address), not both.' }], isError: true };
+      }
+      if (args.plc2DeviceName && !args.plc2Gateway) {
+        return { content: [{ type: 'text' as const, text: 'plc2DeviceName needs plc2Gateway (the gateway whose scan is searched).' }], isError: true };
+      }
+      if (args.plc2Gateway && !args.plc2DeviceName && !args.plc2Address) {
+        return { content: [{ type: 'text' as const, text: 'plc2Gateway needs plc2DeviceName or plc2Address.' }], isError: true };
+      }
+      const plc2Gateway = args.plc2Address ? (args.plc2Gateway ?? 'Gateway-1') : (args.plc2Gateway ?? '');
+      const settings = buildRedundancySettings(args);
+      const escaped = resolvePath(args.projectFilePath, workspaceDir);
+      const deviceUser = args.deviceUser ?? process.env.CODESYS_DEVICE_USER ?? '';
+      const devicePassword = args.devicePassword ?? process.env.CODESYS_DEVICE_PASSWORD ?? '';
+      const script = scriptManager.prepareScriptWithHelpers(
+        'create_redundancy_config',
+        {
+          PROJECT_FILE_PATH: escaped,
+          APPLICATION_PATH: appPathLiteral(args.applicationPath),
+          DEVICE_USER: pyStringLiteral(deviceUser),
+          DEVICE_PASSWORD: pyStringLiteral(devicePassword),
+          OBJECT_NAME: pyStringLiteral(args.objectName ?? 'Redundancy Configuration'),
+          PARENT_PATH: pyStringLiteral(sanitizePouPath(args.parentPath)),
+          SETTINGS_JSON: pyStringLiteral(JSON.stringify(settings)),
+          NON_REDUNDANT_PATHS_JSON: pyStringLiteral(JSON.stringify((args.nonRedundantObjects ?? []).map(sanitizePouPath))),
+          REDUNDANT_PATHS_JSON: pyStringLiteral(JSON.stringify((args.redundantObjects ?? []).map(sanitizePouPath))),
+          PLC2_GATEWAY: pyStringLiteral(plc2Gateway),
+          PLC2_DEVICE_NAME: pyStringLiteral(args.plc2DeviceName ?? ''),
+          PLC2_ADDRESS: pyStringLiteral(args.plc2Address ?? ''),
+          WRITE_SETTINGS: pyBool(args.writeSettings ?? false),
+        },
+        ['register_device_credentials', 'ensure_project_open', 'select_application', 'find_object_by_path']
+      );
+      const online = Boolean(plc2Gateway) || Boolean(args.writeSettings);
+      const result = await executor.executeScript(script, online ? 240_000 : 120_000);
+      const success = result.success && result.output.includes('SCRIPT_SUCCESS');
+      if (!success) {
+        return formatToolResponse(result, '');
+      }
+      const startMarker = '### REDUNDANCY_CONFIG_START ###';
+      const a = result.output.indexOf(startMarker);
+      const b = result.output.indexOf('### REDUNDANCY_CONFIG_END ###');
+      let summary = a !== -1 && b !== -1 && a < b ? result.output.substring(a + startMarker.length, b).trim() : '';
+      try { summary = summary ? JSON.stringify(JSON.parse(summary), null, 2) : ''; } catch { /* keep raw */ }
+      return {
+        content: [{ type: 'text' as const, text: `Redundancy Configuration under '${args.parentPath}' configured. Project saved.${summary ? `\n${summary}` : ''}` }],
+        isError: false,
+      };
     }
   );
 
