@@ -2604,7 +2604,7 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
     {
       projectFilePath: z.string().describe("Path to the project file."),
       applicationPath: z.string().optional().describe(APP_PATH_DESC),
-      loginWaitSeconds: z.number().int().min(0).max(600).optional().describe("Seconds to wait for the application state to stabilise after login() returns. Default: 10. Range 0-600. Keep this short -- if the user has to fill a dialog, they will do it within seconds, not minutes. Increase only when explicitly diagnosing a slow-login case."),
+      loginWaitSeconds: z.number().int().min(0).max(600).optional().describe("Seconds to wait for the application state to stabilise after login() returns. Default: 10. Range 0-600. Keep this short. Increase only when explicitly diagnosing a slow-login case."),
       deviceUser: z.string().optional().describe("Device user account name. Pre-registered via set_default_credentials so the modal Device User Login dialog is suppressed. Falls back to env var CODESYS_DEVICE_USER. If neither is set, the dialog will pop (current behaviour)."),
       devicePassword: z.string().optional().describe("Device user password. Same fallback chain as deviceUser via env CODESYS_DEVICE_PASSWORD."),
     },
@@ -4461,11 +4461,11 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
 
   s.tool(
     'download_to_device',
-    'Downloads the compiled application to the PLC device. Attempts online change first, falls back to full download. PRE-FLIGHT: this tool automatically runs verify_device_reachable BEFORE attempting login(), and refuses to proceed if the cached device address is not in the live scan results -- the user must rebind (call rebind_device_to_scan_result) or set skipReachabilityCheck=true to force. ALWAYS pass deviceUser+devicePassword (or set CODESYS_DEVICE_USER/CODESYS_DEVICE_PASSWORD env vars on the MCP): same credential injection as connect_to_device, the Device User Login dialog does not appear and the download runs unattended. Do not warn the user about a login dialog or ask them to fill one in.',
+    'Downloads the compiled application to the PLC device. Attempts online change first, falls back to full download. PRE-FLIGHT: this tool automatically runs verify_device_reachable BEFORE attempting login(), and refuses to proceed if the cached device address is not in the live scan results; rebind it (call rebind_device_to_scan_result) or set skipReachabilityCheck=true to force. ALWAYS pass deviceUser+devicePassword (or set CODESYS_DEVICE_USER/CODESYS_DEVICE_PASSWORD env vars on the MCP): same credential injection as connect_to_device, the Device User Login dialog does not appear and the download runs unattended. Do not warn the user about a login dialog or ask them to fill one in.',
     {
       projectFilePath: z.string().describe("Path to the project file."),
       applicationPath: z.string().optional().describe(APP_PATH_DESC),
-      loginWaitSeconds: z.number().int().min(0).max(600).optional().describe("Seconds to wait for application state to stabilise after login() returns. Default: 10. Range 0-600. Keep this short -- a dialog gets clicked in seconds, not minutes."),
+      loginWaitSeconds: z.number().int().min(0).max(600).optional().describe("Seconds to wait for application state to stabilise after login() returns. Default: 10. Range 0-600. Keep this short."),
       deviceUser: z.string().optional().describe("Device user account. Pre-registered via set_default_credentials so the modal Device User Login dialog is suppressed. Falls back to env CODESYS_DEVICE_USER."),
       devicePassword: z.string().optional().describe("Device user password. Falls back to env CODESYS_DEVICE_PASSWORD."),
       skipReachabilityCheck: z.boolean().optional().describe("If true, skip the verify_device_reachable pre-flight and go straight to login()/download(). Only use when the gateway/cache lookup is itself broken (e.g. CODESYS doesn't expose the gateway list on this SP). Default false."),

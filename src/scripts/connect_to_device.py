@@ -108,14 +108,12 @@ try:
     if not logged_in:
         raise RuntimeError("All login() call shapes failed. Last error: %s" % last_err)
     print("DEBUG: login() returned. Waiting up to %d seconds for state to stabilise" % LOGIN_WAIT_SECONDS)
-    print("DEBUG: (CODESYS may pop a credential dialog -- enter device password if prompted.)")
 
-    # Poll application_state. CODESYS shows a modal credential dialog the
-    # first time you log into a device with a password; login() may return
-    # immediately while the dialog is still up, leaving the application in
-    # an undefined state. Pump the message loop via system.delay() so the
-    # dialog renders and the user has time to fill it in. Exit early once
-    # the state lands on a recognisable terminal value.
+    # Poll application_state. login() may return before the application
+    # state has settled. Pump the message loop via system.delay() and exit
+    # early once the state lands on a recognisable terminal value. With
+    # deviceUser/devicePassword injected (register_device_credentials_if_set)
+    # no login dialog appears; without them CODESYS falls back to its dialog.
     STABLE_STATES = ('run', 'stop', 'connected', 'halt', 'breakpoint')
     state = "unknown"
     for elapsed in range(LOGIN_WAIT_SECONDS):
