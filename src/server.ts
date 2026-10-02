@@ -4970,7 +4970,8 @@ export async function startMcpServer(config: ServerConfig): Promise<void> {
         'create_symbol_config',
         {
           PROJECT_FILE_PATH: escaped,
-          APPLICATION_PATH: (args.applicationPath ?? '').trim(),
+          // A Python literal: the select_application helper reads it unquoted.
+          APPLICATION_PATH: appPathLiteral(args.applicationPath),
           EXPORT_COMMENTS_TO_XML: args.exportCommentsToXml === false ? '0' : '1',
           SUPPORT_OPC_UA: args.supportOpcUa === false ? '0' : '1',
           LAYOUT_CALCULATOR: args.layoutCalculator ?? 'compatibility',

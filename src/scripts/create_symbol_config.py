@@ -17,7 +17,8 @@ import sys, scriptengine as script_engine, os, traceback, json
 # the chosen Application, it returns success with the existing object's
 # path instead of creating a duplicate.
 
-APPLICATION_PATH = "{APPLICATION_PATH}"
+# Python literal from appPathLiteral(), the same value the select_application helper reads.
+APPLICATION_PATH = {APPLICATION_PATH}
 EXPORT_COMMENTS_TO_XML = "{EXPORT_COMMENTS_TO_XML}" == '1'
 SUPPORT_OPC_UA = "{SUPPORT_OPC_UA}" == '1'
 LAYOUT_CALCULATOR = "{LAYOUT_CALCULATOR}"  # 'compatibility' or 'optimized'
